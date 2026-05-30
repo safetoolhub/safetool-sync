@@ -1,0 +1,4 @@
+# This file is part of SafeTool Sync, licensed under GPLv3 with
+# additional terms. See LICENSE or https://safetoolhub.org for details.
+"""Test fixtures — synthetic scenario builders and shared helpers."""
+from __future__ import annotations
