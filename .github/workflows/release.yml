@@ -3,9 +3,14 @@ name: Release SafeTool Sync
 # Builds binaries for all platforms and creates a DRAFT GitHub Release.
 # Only runs on the PUBLIC repo (safetoolhub/safetool-sync).
 #
+# Artifacts:
+#   Linux:   SafeToolSync-{ver}-linux-amd64.deb, .rpm, .AppImage, .flatpak
+#   Windows: SafeToolSync-{ver}-windows-setup.exe
+#   macOS:   SafeToolSync-{ver}-macos.dmg
+#
 # Triggers:
-#   - Tag push v*       → full release: test + build + draft release
-#   - dry-run/** branch → dry-run: test + build (no release created)
+#   - Tag push v*       → full release
+#   - dry-run/** branch → test + build (no release)
 #   - Manual dispatch   → full release with explicit tag
 
 on:
@@ -25,6 +30,9 @@ permissions:
   contents: write
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Test
+  # ─────────────────────────────────────────────────────────────────────
   test:
     name: Run Tests
     if: github.repository == 'safetoolhub/safetool-sync'
@@ -67,6 +75,9 @@ jobs:
           uv run python -c "from services.models import DiffType, SyncAction; print('Models OK')"
           uv run python -c "from i18n.core import init_i18n, tr; init_i18n('es'); print(tr('app.name'))"
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Build Linux (.deb, .rpm, .AppImage)
+  # ─────────────────────────────────────────────────────────────────────
   build-linux:
     name: Build Linux
     needs: test
@@ -90,10 +101,17 @@ jobs:
             libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
             libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 \
+            rpm libfuse2
           uv venv
           uv pip install -r requirements.txt
           uv pip install pyinstaller pillow
+
+      - name: Install appimagetool
+        run: |
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+            -O /usr/local/bin/appimagetool
+          chmod +x /usr/local/bin/appimagetool
 
       - name: Extract version
         id: version
@@ -121,27 +139,179 @@ jobs:
 
       - name: Package .deb
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           mkdir -p package/DEBIAN
           mkdir -p package/usr/local/share/safetool-sync
+          mkdir -p package/usr/local/bin
           cp -r dist/safetool-sync/* package/usr/local/share/safetool-sync/
+          ln -sf /usr/local/share/safetool-sync/safetool-sync package/usr/local/bin/safetool-sync
           cat > package/DEBIAN/control << EOF
           Package: safetool-sync
-          Version: ${{ steps.version.outputs.version }}
+          Version: ${VERSION}
           Architecture: amd64
           Depends: libgl1, libxkbcommon0
           Maintainer: SafeToolHub <safetoolhub@protonmail.com>
           Description: Mirror synchronization between disks and folders
           EOF
           sed -i 's/^          //' package/DEBIAN/control
-          dpkg-deb --build package safetool-sync-amd64.deb
+          dpkg-deb --build package "dist/SafeToolSync-${VERSION}-linux-amd64.deb"
 
-      - name: Upload artifacts
+      - name: Package .rpm
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # rpm doesn't allow hyphens in version, replace with ~
+          RPM_VERSION="${VERSION//-/\~}"
+          mkdir -p rpmbuild/{SPECS,BUILDROOT}
+          BUILDROOT="$(pwd)/rpmbuild/BUILDROOT"
+          mkdir -p "$BUILDROOT/usr/local/share/safetool-sync"
+          mkdir -p "$BUILDROOT/usr/local/bin"
+          cp -r dist/safetool-sync/* "$BUILDROOT/usr/local/share/safetool-sync/"
+          ln -sf /usr/local/share/safetool-sync/safetool-sync "$BUILDROOT/usr/local/bin/safetool-sync"
+          cat > rpmbuild/SPECS/safetool-sync.spec << EOF
+          Name: safetool-sync
+          Version: ${RPM_VERSION}
+          Release: 1
+          Summary: Mirror synchronization between disks and folders
+          License: GPLv3
+          URL: https://safetoolhub.org
+          AutoReqProv: no
+
+          %description
+          SafeTool Sync is a cross-platform desktop application for mirror synchronization between disks and folders.
+
+          %install
+          cp -a %{_builddir}/BUILDROOT/* %{buildroot}/
+
+          %files
+          /usr/local/share/safetool-sync/
+          /usr/local/bin/safetool-sync
+          EOF
+          sed -i 's/^          //' rpmbuild/SPECS/safetool-sync.spec
+          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
+            --define "_builddir $(pwd)/rpmbuild" \
+            --buildroot "$BUILDROOT" \
+            -bb rpmbuild/SPECS/safetool-sync.spec
+          find rpmbuild/RPMS -name "*.rpm" -exec cp {} "dist/SafeToolSync-${VERSION}-linux-amd64.rpm" \;
+
+      - name: Package .AppImage
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          APPDIR="SafeToolSync.AppDir"
+          mkdir -p "$APPDIR/usr/bin"
+          mkdir -p "$APPDIR/usr/share/applications"
+          mkdir -p "$APPDIR/usr/share/icons/hicolor/512x512/apps"
+          cp -r dist/safetool-sync/* "$APPDIR/usr/bin/"
+          cp build/org.safetoolhub.safetoolsync.desktop "$APPDIR/usr/share/applications/"
+          cp build/org.safetoolhub.safetoolsync.desktop "$APPDIR/"
+          cp assets/icon.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png"
+          cp assets/icon.png "$APPDIR/org.safetoolhub.safetoolsync.png"
+          ln -sf org.safetoolhub.safetoolsync.png "$APPDIR/.DirIcon"
+          cat > "$APPDIR/AppRun" << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          exec "$HERE/usr/bin/safetool-sync" "$@"
+          EOF
+          sed -i 's/^          //' "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+          ARCH=x86_64 appimagetool "$APPDIR" "dist/SafeToolSync-${VERSION}-linux-amd64.AppImage"
+
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: linux-build
-          path: safetool-sync-amd64.deb
+          name: linux-artifacts
+          path: |
+            dist/SafeToolSync-*-linux-*
           if-no-files-found: warn
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Build Linux Flatpak
+  # ─────────────────────────────────────────────────────────────────────
+  build-flatpak:
+    name: Build Flatpak
+    needs: test
+    if: github.repository == 'safetoolhub/safetool-sync'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            flatpak flatpak-builder elfutils \
+            libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install pyinstaller pillow
+
+      - name: Add Flathub remote
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install Flatpak SDK
+        run: |
+          flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ "$GITHUB_REF" == refs/heads/dry-run/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/dry-run/}"
+          elif [[ "$GITHUB_REF" == refs/heads/release/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/release/}"
+          else
+            TAG="${GITHUB_REF##*/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build PyInstaller binary
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run python dev-tools/build.py --clean
+
+      - name: Build Flatpak bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          APP_ID="org.safetoolhub.safetoolsync"
+          BUILD_DIR="flatpak-build"
+          REPO_DIR="flatpak-repo"
+          rm -rf "$BUILD_DIR" "$REPO_DIR"
+          flatpak-builder --user --force-clean \
+            --repo="$REPO_DIR" \
+            "$BUILD_DIR" \
+            build/org.safetoolhub.safetoolsync.yml
+          BUNDLE_NAME="SafeToolSync-${VERSION}-linux-amd64.flatpak"
+          flatpak build-bundle "$REPO_DIR" "dist/${BUNDLE_NAME}" "$APP_ID"
+
+      - name: Upload Flatpak artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: flatpak-artifacts
+          path: dist/SafeToolSync-*-linux-*.flatpak
+          if-no-files-found: warn
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Build Windows (Inno Setup installer)
+  # ─────────────────────────────────────────────────────────────────────
   build-windows:
     name: Build Windows
     needs: test
@@ -164,24 +334,51 @@ jobs:
           uv pip install -r requirements.txt
           uv pip install pyinstaller pillow
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ "$GITHUB_REF" == refs/heads/dry-run/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/dry-run/}"
+          elif [[ "$GITHUB_REF" == refs/heads/release/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/release/}"
+          else
+            TAG="${GITHUB_REF##*/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Build with PyInstaller
         env:
           PYTHONUTF8: "1"
         run: |
           uv run python dev-tools/build.py --clean
 
-      - name: Zip Windows build
-        shell: pwsh
+      - name: Build installer with Inno Setup
+        shell: cmd
         run: |
-          Compress-Archive -Path dist/safetool-sync/* -DestinationPath safetool-sync-windows.zip
+          set APP_VERSION=${{ steps.version.outputs.version }}
+          set APP_FULL_VERSION=${{ steps.version.outputs.version }}
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\installer.iss
 
-      - name: Upload artifacts
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: windows-build
-          path: safetool-sync-windows.zip
+          name: windows-artifacts
+          path: dist/SafeToolSync-*-windows-setup.exe
           if-no-files-found: warn
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Build macOS (.dmg)
+  # ─────────────────────────────────────────────────────────────────────
   build-macos:
     name: Build macOS
     needs: test
@@ -204,29 +401,53 @@ jobs:
           uv pip install -r requirements.txt
           uv pip install pyinstaller pillow
 
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ "$GITHUB_REF" == refs/heads/dry-run/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/dry-run/}"
+          elif [[ "$GITHUB_REF" == refs/heads/release/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/release/}"
+          else
+            TAG="${GITHUB_REF##*/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Build with PyInstaller
         run: |
           uv run python dev-tools/build.py --clean
 
       - name: Create DMG
         run: |
-          brew install create-dmg
+          VERSION="${{ steps.version.outputs.version }}"
           create-dmg \
             --volname "SafeTool Sync" \
             --app-drop-link 425 125 \
-            safetool-sync.dmg \
+            "dist/SafeToolSync-${VERSION}-macos.dmg" \
             dist/safetool-sync/ || true
 
-      - name: Upload artifacts
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: macos-build
-          path: safetool-sync.dmg
+          name: macos-artifacts
+          path: dist/SafeToolSync-*-macos.dmg
           if-no-files-found: warn
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Create DRAFT Release
+  # ─────────────────────────────────────────────────────────────────────
   release:
     name: Create Draft Release
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-flatpak, build-windows, build-macos]
     if: ${{ github.repository == 'safetoolhub/safetool-sync' && !startsWith(github.ref, 'refs/heads/dry-run/') }}
     runs-on: ubuntu-latest
     permissions:
@@ -238,13 +459,22 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: List artifacts
+        run: |
+          echo "Release artifacts:"
+          find release-assets -type f | sort
+
       - name: Determine pre-release status
         id: prerelease
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ inputs.tag }}"
-          else
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ "$GITHUB_REF" == refs/heads/release/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/release/}"
+          else
+            TAG="${GITHUB_REF##*/}"
           fi
           if echo "$TAG" | grep -qiE '(alpha|beta|rc|dev)'; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
