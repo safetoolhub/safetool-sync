@@ -34,12 +34,15 @@ def build_pyinstaller(debug: bool = False) -> None:
     DIST_DIR.mkdir(parents=True, exist_ok=True)
 
     sep = os.pathsep
+
+    icon_file = PROJECT_ROOT / "assets" / ("icon.ico" if platform.system() == "Windows" else "icon.png")
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", "safetool-sync",
         "--noconfirm",
         "--windowed",
-        "--icon", str(PROJECT_ROOT / "assets" / "icon.png"),
+        "--icon", str(icon_file),
         "--add-data", f"{PROJECT_ROOT / 'i18n'}{sep}i18n",
         "--add-data", f"{PROJECT_ROOT / 'assets'}{sep}assets",
         "--distpath", str(DIST_DIR),

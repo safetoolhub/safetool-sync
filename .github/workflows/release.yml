@@ -106,17 +106,35 @@ jobs:
         run: |
           uv run python dev-tools/build.py --clean
 
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/heads/dry-run/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/dry-run/}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          # Strip leading 'v' for .deb version
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package .deb
         run: |
           mkdir -p package/DEBIAN
           mkdir -p package/usr/local/share/safetool-sync
           cp -r dist/safetool-sync/* package/usr/local/share/safetool-sync/
-          echo "Package: safetool-sync" > package/DEBIAN/control
-          echo "Version: ${{ github.ref_name }}" >> package/DEBIAN/control
-          echo "Architecture: amd64" >> package/DEBIAN/control
-          echo "Depends: libgl1, libxkbcommon0" >> package/DEBIAN/control
-          echo "Maintainer: SafeToolHub <safetoolhub@protonmail.com>" >> package/DEBIAN/control
-          echo "Description: Mirror synchronization between disks and folders" >> package/DEBIAN/control
+          cat > package/DEBIAN/control << EOF
+          Package: safetool-sync
+          Version: ${{ steps.version.outputs.version }}
+          Architecture: amd64
+          Depends: libgl1, libxkbcommon0
+          Maintainer: SafeToolHub <safetoolhub@protonmail.com>
+          Description: Mirror synchronization between disks and folders
+          EOF
+          sed -i 's/^          //' package/DEBIAN/control
           dpkg-deb --build package safetool-sync-amd64.deb
 
       - name: Upload artifacts
