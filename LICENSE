@@ -1,35 +1,30 @@
-GNU GENERAL PUBLIC LICENSE
-Version 3, 29 June 2007
+                    GNU GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
 
-Copyright (C) 2024-2026 SafeToolHub
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+[... Full GPLv3 terms apply ...]
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
+For the complete text of the GNU General Public License version 3,
+please see: https://www.gnu.org/licenses/gpl-3.0.txt
 
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
+=================================================================
+             ADDITIONAL TERMS UNDER SECTION 7 OF GPLv3
+=================================================================
 
-================================================================================
+This project, SafeTool Sync, and the SafeToolHub portfolio is distributed 
+under the GNU General Public License version 3 (GPLv3) with the following 
+additional terms applied in accordance with Section 7(b):
 
-ADDITIONAL TERMS — SafeTool Sync
+1. MANDATORY ATTRIBUTION: You must retain appropriate attribution to the 
+original author (safetoolhub@protonmail.com) and include a visible, clickable link to 
+the official project website (https://safetoolhub.org) in any public 
+distribution, derivative work, or software built upon this source code. 
+This attribution must remain visible in the software's UI (e.g., About dialog, footer).
 
-1. The name "SafeTool Sync" and the SafeTool logo are trademarks of
-   SafeToolHub and may not be used to endorse or promote products
-   derived from this software without prior written permission.
-
-2. Modified versions must be clearly marked as such and must not be
-   misrepresented as being the original software.
-
-3. This license applies to the entire source code of SafeTool Sync,
-   including all modules, services, utilities, assets, and
-   configuration files.
-
-For the full text of the GNU General Public License v3, see:
-https://www.gnu.org/licenses/gpl-3.0.txt
+2. LOGO AND TRADEMARK RESTRICTIONS: This license does not grant permission 
+to use the trade names, trademarks, service marks, or product names of 
+the Licensor (SafeToolHub, SafeTool Pix), except as required for reasonable 
+and customary use in describing the origin of the Work.
