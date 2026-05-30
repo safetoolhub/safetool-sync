@@ -35,19 +35,31 @@ def build_pyinstaller(debug: bool = False) -> None:
 
     sep = os.pathsep
 
-    icon_file = PROJECT_ROOT / "assets" / ("icon.ico" if platform.system() == "Windows" else "icon.png")
+    if platform.system() == "Windows":
+        icon_file = PROJECT_ROOT / "assets" / "icon.ico"
+    elif platform.system() == "Darwin":
+        icon_file = PROJECT_ROOT / "assets" / "icon.icns"
+        if not icon_file.exists():
+            icon_file = PROJECT_ROOT / "assets" / "icon.png"
+    else:
+        icon_file = PROJECT_ROOT / "assets" / "icon.png"
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", "safetool-sync",
         "--noconfirm",
         "--windowed",
-        "--icon", str(icon_file),
+    ]
+
+    if icon_file.exists():
+        cmd.extend(["--icon", str(icon_file)])
+
+    cmd.extend([
         "--add-data", f"{PROJECT_ROOT / 'i18n'}{sep}i18n",
         "--add-data", f"{PROJECT_ROOT / 'assets'}{sep}assets",
         "--distpath", str(DIST_DIR),
         "--workpath", str(BUILD_DIR / "tmp"),
-    ]
+    ])
 
     if debug:
         cmd.append("--debug=all")

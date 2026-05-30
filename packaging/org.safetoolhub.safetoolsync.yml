@@ -1,0 +1,48 @@
+# Flatpak manifest for SafeTool Sync
+# Uses the pre-built PyInstaller binary (dist/safetool-sync/) as source.
+# Build with: flatpak-builder --user --force-clean --repo=repo build-dir packaging/org.safetoolhub.safetoolsync.yml
+# Bundle:     flatpak build-bundle repo SafeToolSync.flatpak org.safetoolhub.safetoolsync
+
+app-id: org.safetoolhub.safetoolsync
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: safetool-sync
+
+finish-args:
+  # Filesystem access for sync operations
+  - --filesystem=home
+  - --filesystem=/media
+  - --filesystem=/mnt
+  - --filesystem=/run/media
+  # Display
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=fallback-x11
+  # GPU acceleration
+  - --device=dri
+
+modules:
+  - name: safetool-sync
+    buildsystem: simple
+    build-commands:
+      # Install the pre-built PyInstaller bundle
+      - install -d /app/opt/safetool-sync
+      - cp -a dist/safetool-sync/* /app/opt/safetool-sync/
+
+      # Launcher script
+      - install -Dm755 packaging/safetool-sync-launcher.sh /app/bin/safetool-sync
+
+      # Desktop file
+      - install -Dm644 packaging/org.safetoolhub.safetoolsync.desktop /app/share/applications/org.safetoolhub.safetoolsync.desktop
+
+      # Icon
+      - install -Dm644 assets/icon.png /app/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png
+
+      # AppStream metainfo
+      - install -Dm644 packaging/org.safetoolhub.safetoolsync.metainfo.xml /app/share/metainfo/org.safetoolhub.safetoolsync.metainfo.xml
+
+    sources:
+      - type: dir
+        path: ..
