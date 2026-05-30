@@ -176,6 +176,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           RPM_VERSION="${VERSION//-/\~}"
           SRCDIR="$(pwd)/dist/safetool-sync"
+          REPODIR="$(pwd)"
           mkdir -p rpmbuild/{SPECS,SOURCES}
           cat > rpmbuild/SPECS/safetool-sync.spec << SPECEOF
           Name: safetool-sync
@@ -196,8 +197,8 @@ jobs:
           mkdir -p %{buildroot}/usr/share/icons/hicolor/512x512/apps
           cp -a ${SRCDIR}/* %{buildroot}/usr/local/share/safetool-sync/
           ln -sf /usr/local/share/safetool-sync/safetool-sync %{buildroot}/usr/local/bin/safetool-sync
-          cp packaging/org.safetoolhub.safetoolsync.desktop %{buildroot}/usr/share/applications/
-          cp assets/icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png
+          cp %{_sourcedir}/packaging/org.safetoolhub.safetoolsync.desktop %{buildroot}/usr/share/applications/
+          cp %{_sourcedir}/assets/icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png
 
           %post
           update-desktop-database /usr/share/applications/ 2>/dev/null || true
@@ -214,6 +215,7 @@ jobs:
           SPECEOF
           sed -i 's/^          //' rpmbuild/SPECS/safetool-sync.spec
           rpmbuild --define "_topdir $(pwd)/rpmbuild" \
+            --define "_sourcedir ${REPODIR}" \
             -bb rpmbuild/SPECS/safetool-sync.spec
           find rpmbuild/RPMS -name "*.rpm" -exec cp {} "dist/SafeToolSync-${VERSION}-linux-amd64.rpm" \;
 
