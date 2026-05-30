@@ -143,23 +143,37 @@ jobs:
           mkdir -p package/DEBIAN
           mkdir -p package/usr/local/share/safetool-sync
           mkdir -p package/usr/local/bin
+          mkdir -p package/usr/share/applications
+          mkdir -p package/usr/share/icons/hicolor/512x512/apps
           cp -r dist/safetool-sync/* package/usr/local/share/safetool-sync/
           ln -sf /usr/local/share/safetool-sync/safetool-sync package/usr/local/bin/safetool-sync
+          cp packaging/org.safetoolhub.safetoolsync.desktop package/usr/share/applications/
+          cp assets/icon.png "package/usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png"
           cat > package/DEBIAN/control << EOF
           Package: safetool-sync
           Version: ${VERSION}
           Architecture: amd64
-          Depends: libgl1, libxkbcommon0
+          Depends: libegl1, libgl1, libglib2.0-0, libdbus-1-3, libxkbcommon0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-xinerama0, libxcb-xfixes0
           Maintainer: SafeToolHub <safetoolhub@protonmail.com>
           Description: Mirror synchronization between disks and folders
           EOF
           sed -i 's/^          //' package/DEBIAN/control
+          cat > package/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          update-desktop-database /usr/share/applications/ 2>/dev/null || true
+          gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+          EOF
+          chmod +x package/DEBIAN/postinst
+          cat > package/DEBIAN/prerm << 'EOF'
+          #!/bin/bash
+          update-desktop-database /usr/share/applications/ 2>/dev/null || true
+          EOF
+          chmod +x package/DEBIAN/prerm
           dpkg-deb --build package "dist/SafeToolSync-${VERSION}-linux-amd64.deb"
 
       - name: Package .rpm
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # rpm doesn't allow hyphens in version, replace with ~
           RPM_VERSION="${VERSION//-/\~}"
           SRCDIR="$(pwd)/dist/safetool-sync"
           mkdir -p rpmbuild/{SPECS,SOURCES}
@@ -178,12 +192,25 @@ jobs:
           %install
           mkdir -p %{buildroot}/usr/local/share/safetool-sync
           mkdir -p %{buildroot}/usr/local/bin
+          mkdir -p %{buildroot}/usr/share/applications
+          mkdir -p %{buildroot}/usr/share/icons/hicolor/512x512/apps
           cp -a ${SRCDIR}/* %{buildroot}/usr/local/share/safetool-sync/
           ln -sf /usr/local/share/safetool-sync/safetool-sync %{buildroot}/usr/local/bin/safetool-sync
+          cp packaging/org.safetoolhub.safetoolsync.desktop %{buildroot}/usr/share/applications/
+          cp assets/icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png
+
+          %post
+          update-desktop-database /usr/share/applications/ 2>/dev/null || true
+          gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+
+          %postun
+          update-desktop-database /usr/share/applications/ 2>/dev/null || true
 
           %files
           /usr/local/share/safetool-sync/
           /usr/local/bin/safetool-sync
+          /usr/share/applications/org.safetoolhub.safetoolsync.desktop
+          /usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png
           SPECEOF
           sed -i 's/^          //' rpmbuild/SPECS/safetool-sync.spec
           rpmbuild --define "_topdir $(pwd)/rpmbuild" \
