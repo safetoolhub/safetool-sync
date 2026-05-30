@@ -76,4 +76,4 @@ Para dependencias de desarrollo, usa `uv sync --extra dev`.
 
 ## License
 
-GPLv3 — See LICENSE file for details.
+GPLv3 with attribution — See LICENSE file for details.
