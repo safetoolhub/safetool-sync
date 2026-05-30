@@ -3,7 +3,7 @@
 
 [project]
 name = "safetool-sync"
-version = "1.0.1-beta"
+version = "1.0.2-beta"
 description = "Mirror synchronization between disks and folders"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.12"

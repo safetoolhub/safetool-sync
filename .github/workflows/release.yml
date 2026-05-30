@@ -29,9 +29,6 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   # ─────────────────────────────────────────────────────────────────────
   # Test
@@ -50,8 +47,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
 
       - name: Create venv & install deps
         run: |
@@ -89,8 +84,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
 
       - name: Install dependencies
         run: |
@@ -237,8 +230,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
 
       - name: Install dependencies
         run: |
@@ -324,8 +315,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
 
       - name: Install dependencies
         run: |
@@ -400,8 +389,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
 
       - name: Install dependencies
         run: |

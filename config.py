@@ -14,7 +14,7 @@ class Config:
 
     # ── Identity ──────────────────────────────────────────────────
     APP_NAME: str = "SafeTool Sync"
-    APP_VERSION: str = "1.0.1"
+    APP_VERSION: str = "1.0.2"
     APP_VERSION_SUFFIX: str = "beta"
     APP_AUTHOR: str = "SafeToolHub"
     APP_CONTACT: str = "safetoolhub@protonmail.com"
