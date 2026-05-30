@@ -198,8 +198,8 @@ jobs:
           mkdir -p "$APPDIR/usr/share/applications"
           mkdir -p "$APPDIR/usr/share/icons/hicolor/512x512/apps"
           cp -r dist/safetool-sync/* "$APPDIR/usr/bin/"
-          cp build/org.safetoolhub.safetoolsync.desktop "$APPDIR/usr/share/applications/"
-          cp build/org.safetoolhub.safetoolsync.desktop "$APPDIR/"
+          cp packaging/org.safetoolhub.safetoolsync.desktop "$APPDIR/usr/share/applications/"
+          cp packaging/org.safetoolhub.safetoolsync.desktop "$APPDIR/"
           cp assets/icon.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/org.safetoolhub.safetoolsync.png"
           cp assets/icon.png "$APPDIR/org.safetoolhub.safetoolsync.png"
           ln -sf org.safetoolhub.safetoolsync.png "$APPDIR/.DirIcon"
@@ -295,7 +295,7 @@ jobs:
           flatpak-builder --user --force-clean \
             --repo="$REPO_DIR" \
             "$BUILD_DIR" \
-            build/org.safetoolhub.safetoolsync.yml
+            packaging/org.safetoolhub.safetoolsync.yml
           BUNDLE_NAME="SafeToolSync-${VERSION}-linux-amd64.flatpak"
           flatpak build-bundle "$REPO_DIR" "dist/${BUNDLE_NAME}" "$APP_ID"
 
@@ -364,7 +364,13 @@ jobs:
         run: |
           $env:APP_VERSION = "${{ steps.version.outputs.version }}"
           $env:APP_FULL_VERSION = "${{ steps.version.outputs.version }}"
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "build\installer.iss"
+          $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          } else {
+            $iscc = $iscc.Source
+          }
+          & $iscc "packaging\installer.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows artifacts

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SafeTool Sync
+Comment=Mirror synchronization between disks and folders
+Exec=safetool-sync
+Icon=org.safetoolhub.safetoolsync
+Categories=Utility;FileTools;
+Keywords=sync;backup;mirror;disk;
