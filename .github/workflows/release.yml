@@ -161,13 +161,9 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           # rpm doesn't allow hyphens in version, replace with ~
           RPM_VERSION="${VERSION//-/\~}"
-          mkdir -p rpmbuild/{SPECS,BUILDROOT}
-          BUILDROOT="$(pwd)/rpmbuild/BUILDROOT"
-          mkdir -p "$BUILDROOT/usr/local/share/safetool-sync"
-          mkdir -p "$BUILDROOT/usr/local/bin"
-          cp -r dist/safetool-sync/* "$BUILDROOT/usr/local/share/safetool-sync/"
-          ln -sf /usr/local/share/safetool-sync/safetool-sync "$BUILDROOT/usr/local/bin/safetool-sync"
-          cat > rpmbuild/SPECS/safetool-sync.spec << EOF
+          SRCDIR="$(pwd)/dist/safetool-sync"
+          mkdir -p rpmbuild/{SPECS,SOURCES}
+          cat > rpmbuild/SPECS/safetool-sync.spec << SPECEOF
           Name: safetool-sync
           Version: ${RPM_VERSION}
           Release: 1
@@ -180,16 +176,17 @@ jobs:
           SafeTool Sync is a cross-platform desktop application for mirror synchronization between disks and folders.
 
           %install
-          cp -a %{_builddir}/BUILDROOT/* %{buildroot}/
+          mkdir -p %{buildroot}/usr/local/share/safetool-sync
+          mkdir -p %{buildroot}/usr/local/bin
+          cp -a ${SRCDIR}/* %{buildroot}/usr/local/share/safetool-sync/
+          ln -sf /usr/local/share/safetool-sync/safetool-sync %{buildroot}/usr/local/bin/safetool-sync
 
           %files
           /usr/local/share/safetool-sync/
           /usr/local/bin/safetool-sync
-          EOF
+          SPECEOF
           sed -i 's/^          //' rpmbuild/SPECS/safetool-sync.spec
           rpmbuild --define "_topdir $(pwd)/rpmbuild" \
-            --define "_builddir $(pwd)/rpmbuild" \
-            --buildroot "$BUILDROOT" \
             -bb rpmbuild/SPECS/safetool-sync.spec
           find rpmbuild/RPMS -name "*.rpm" -exec cp {} "dist/SafeToolSync-${VERSION}-linux-amd64.rpm" \;
 
@@ -363,11 +360,12 @@ jobs:
           uv run python dev-tools/build.py --clean
 
       - name: Build installer with Inno Setup
-        shell: cmd
+        shell: pwsh
         run: |
-          set APP_VERSION=${{ steps.version.outputs.version }}
-          set APP_FULL_VERSION=${{ steps.version.outputs.version }}
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\installer.iss
+          $env:APP_VERSION = "${{ steps.version.outputs.version }}"
+          $env:APP_FULL_VERSION = "${{ steps.version.outputs.version }}"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "build\installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v5
