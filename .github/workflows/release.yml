@@ -1,0 +1,251 @@
+name: Release SafeTool Sync
+
+# Builds binaries for all platforms and creates a DRAFT GitHub Release.
+# The release stays PRIVATE until you manually publish it from the GitHub UI.
+#
+# IMPORTANT: This workflow only runs on the PUBLIC repo (safetoolhub/safetool-sync).
+# Development happens in safetool-sync-dev and is pushed to the public repo via
+# dev-tools/sync_to_public.sh. The repository guard below prevents releases from
+# ever being created in the dev repo even though this file is synced there too.
+#
+# Triggers:
+#   - Tag push v*       → full release: test + build + draft release
+#   - dry-run/** branch → dry-run: test + build (no release created)
+#   - Manual dispatch   → full release with explicit tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - 'dry-run/**'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag for release (e.g., v0.2.0-beta)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Run Tests
+    if: github.repository == 'safetoolhub/safetool-sync'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Qt system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+
+      - name: Create venv & install deps
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run pytest tests/ -v --tb=short
+
+      - name: Smoke test imports
+        run: |
+          uv run python -c "from config import Config; print(Config.APP_NAME, Config.get_full_version())"
+          uv run python -c "from services.models import DiffType, SyncAction; print('Models OK')"
+          uv run python -c "from i18n.core import init_i18n, tr; init_i18n('es'); print(tr('app.name'))"
+
+  build-linux:
+    name: Build Linux
+    needs: test
+    if: github.repository == 'safetoolhub/safetool-sync'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python and Qt dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install pyinstaller
+
+      - name: Build with PyInstaller
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run python dev-tools/build.py --clean
+
+      - name: Package .deb
+        run: |
+          mkdir -p package/DEBIAN
+          mkdir -p package/usr/local/share/safetool-sync
+          cp -r dist/safetool-sync/* package/usr/local/share/safetool-sync/
+          echo "Package: safetool-sync" > package/DEBIAN/control
+          echo "Version: ${{ github.ref_name }}" >> package/DEBIAN/control
+          echo "Architecture: amd64" >> package/DEBIAN/control
+          echo "Depends: libgl1, libxkbcommon0" >> package/DEBIAN/control
+          echo "Maintainer: SafeToolHub <safetoolhub@protonmail.com>" >> package/DEBIAN/control
+          echo "Description: Mirror synchronization between disks and folders" >> package/DEBIAN/control
+          dpkg-deb --build package safetool-sync-amd64.deb
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: linux-build
+          path: safetool-sync-amd64.deb
+          if-no-files-found: warn
+
+  build-windows:
+    name: Build Windows
+    needs: test
+    if: github.repository == 'safetoolhub/safetool-sync'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install pyinstaller
+
+      - name: Build with PyInstaller
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          uv run python dev-tools/build.py --clean
+
+      - name: Zip Windows build
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/safetool-sync/* -DestinationPath safetool-sync-windows.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-build
+          path: safetool-sync-windows.zip
+          if-no-files-found: warn
+
+  build-macos:
+    name: Build macOS
+    needs: test
+    if: github.repository == 'safetoolhub/safetool-sync'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          uv run python dev-tools/build.py --clean
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "SafeTool Sync" \
+            --app-drop-link 425 125 \
+            safetool-sync.dmg \
+            dist/safetool-sync/ || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: macos-build
+          path: safetool-sync.dmg
+          if-no-files-found: warn
+
+  release:
+    name: Create Draft Release
+    needs: [build-linux, build-windows, build-macos]
+    if: ${{ github.repository == 'safetoolhub/safetool-sync' && !startsWith(github.ref, 'refs/heads/dry-run/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Determine pre-release status
+        id: prerelease
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if echo "$TAG" | grep -qiE '(alpha|beta|rc|dev)'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create DRAFT GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prerelease.outputs.tag }}
+          name: "SafeTool Sync ${{ steps.prerelease.outputs.tag }}"
+          draft: true
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          generate_release_notes: true
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
