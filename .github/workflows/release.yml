@@ -1,12 +1,7 @@
 name: Release SafeTool Sync
 
 # Builds binaries for all platforms and creates a DRAFT GitHub Release.
-# The release stays PRIVATE until you manually publish it from the GitHub UI.
-#
-# IMPORTANT: This workflow only runs on the PUBLIC repo (safetoolhub/safetool-sync).
-# Development happens in safetool-sync-dev and is pushed to the public repo via
-# dev-tools/sync_to_public.sh. The repository guard below prevents releases from
-# ever being created in the dev repo even though this file is synced there too.
+# Only runs on the PUBLIC repo (safetoolhub/safetool-sync).
 #
 # Triggers:
 #   - Tag push v*       → full release: test + build + draft release
@@ -88,7 +83,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Install Python and Qt dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
@@ -98,28 +93,31 @@ jobs:
             libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
           uv venv
           uv pip install -r requirements.txt
-          uv pip install pyinstaller
-
-      - name: Build with PyInstaller
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          uv run python dev-tools/build.py --clean
+          uv pip install pyinstaller pillow
 
       - name: Extract version
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
           elif [[ "$GITHUB_REF" == refs/heads/dry-run/* ]]; then
             TAG="${GITHUB_REF#refs/heads/dry-run/}"
+          elif [[ "$GITHUB_REF" == refs/heads/release/* ]]; then
+            TAG="${GITHUB_REF#refs/heads/release/}"
           else
-            TAG="${GITHUB_REF#refs/tags/}"
+            TAG="${GITHUB_REF##*/}"
           fi
-          # Strip leading 'v' for .deb version
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build with PyInstaller
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run python dev-tools/build.py --clean
 
       - name: Package .deb
         run: |
@@ -164,7 +162,7 @@ jobs:
         run: |
           uv venv
           uv pip install -r requirements.txt
-          uv pip install pyinstaller
+          uv pip install pyinstaller pillow
 
       - name: Build with PyInstaller
         env:
@@ -204,7 +202,7 @@ jobs:
         run: |
           uv venv
           uv pip install -r requirements.txt
-          uv pip install pyinstaller
+          uv pip install pyinstaller pillow
 
       - name: Build with PyInstaller
         run: |
