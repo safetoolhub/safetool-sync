@@ -124,3 +124,50 @@ class TestExecutePlanCancel:
 
             report = execute_plan(plan, src_root, dst_root, verify_mode="OFF", cancel_check=cancel_check)
             assert "Cancelled" in str(report.errors) or report.copied <= 2
+
+
+class TestCaseMismatch:
+    def test_case_mismatch_overwrite_fixes_case(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+            (src_root / "COCHE" / "file.txt").parent.mkdir(parents=True, exist_ok=True)
+            (src_root / "COCHE" / "file.txt").write_text("source content")
+
+            (dst_root / "coche" / "file.txt").parent.mkdir(parents=True, exist_ok=True)
+            (dst_root / "coche" / "file.txt").write_text("dest content")
+
+            source_entry = _entry("COCHE/file.txt", size=14, hash_sha256="src")
+            dest_entry = _entry("coche/file.txt", size=12, hash_sha256="dst")
+            entries = [_comparison("COCHE/file.txt", DiffType.CASE_MISMATCH, SyncAction.OVERWRITE_DEST, source=source_entry, dest=dest_entry)]
+            plan = SyncPlan(entries=entries, total_copy_bytes=14, total_delete_count=0, total_overwrite_count=1, total_rename_count=0)
+
+            report = execute_plan(plan, src_root, dst_root, verify_mode="OFF")
+            assert report.overwritten == 1
+
+            actual_file = list(dst_root.rglob("file.txt"))[0]
+            assert actual_file.parent.name == "COCHE"
+            assert actual_file.read_text() == "source content"
+
+    def test_case_mismatch_nested_directories(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+            (src_root / "FOLDER" / "SUB" / "data.txt").parent.mkdir(parents=True, exist_ok=True)
+            (src_root / "FOLDER" / "SUB" / "data.txt").write_text("new data")
+
+            (dst_root / "folder" / "sub" / "data.txt").parent.mkdir(parents=True, exist_ok=True)
+            (dst_root / "folder" / "sub" / "data.txt").write_text("old data")
+
+            source_entry = _entry("FOLDER/SUB/data.txt", size=8, hash_sha256="src")
+            dest_entry = _entry("folder/sub/data.txt", size=8, hash_sha256="dst")
+            entries = [_comparison("FOLDER/SUB/data.txt", DiffType.CASE_MISMATCH, SyncAction.OVERWRITE_DEST, source=source_entry, dest=dest_entry)]
+            plan = SyncPlan(entries=entries, total_copy_bytes=8, total_delete_count=0, total_overwrite_count=1, total_rename_count=0)
+
+            report = execute_plan(plan, src_root, dst_root, verify_mode="OFF")
+            assert report.overwritten == 1
+
+            actual_file = list(dst_root.rglob("data.txt"))[0]
+            assert "FOLDER" in str(actual_file)
+            assert "SUB" in str(actual_file)
+            assert actual_file.read_text() == "new data"

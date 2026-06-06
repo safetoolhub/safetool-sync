@@ -29,6 +29,7 @@ class SyncWorker(QThread):
         dest_root: Path,
         verify_mode: str = "FULL",
         use_trash: bool = True,
+        cleanup_empty_dirs: bool = False,
         state_manager: SyncStateManager | None = None,
         dry_run: bool = False,
         parent=None,
@@ -39,6 +40,7 @@ class SyncWorker(QThread):
         self._dest_root = Path(dest_root)
         self._verify_mode = verify_mode
         self._use_trash = use_trash
+        self._cleanup_empty_dirs = cleanup_empty_dirs
         self._state_manager = state_manager
         self._dry_run = dry_run
         self._cancelled = False
@@ -60,6 +62,7 @@ class SyncWorker(QThread):
                 dest_root=self._dest_root,
                 verify_mode=self._verify_mode,
                 use_trash=self._use_trash,
+                cleanup_empty_dirs=self._cleanup_empty_dirs,
                 progress_cb=self._on_progress,
                 file_completed_cb=self._on_file_completed,
                 file_verified_cb=self._on_file_verified,

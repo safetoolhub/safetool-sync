@@ -72,6 +72,7 @@ DIFF_TYPE_COLORS = {
     DiffType.MODIFIED: DesignSystem.COLOR_DIFF_MODIFIED,
     DiffType.CONFLICT: DesignSystem.COLOR_DIFF_CONFLICT,
     DiffType.RENAMED: DesignSystem.COLOR_DIFF_RENAMED,
+    DiffType.CASE_MISMATCH: DesignSystem.COLOR_DIFF_CASE_MISMATCH,
     DiffType.ERROR_SOURCE: DesignSystem.COLOR_DIFF_ERROR,
     DiffType.ERROR_DEST: DesignSystem.COLOR_DIFF_ERROR,
 }
@@ -83,6 +84,7 @@ DIFF_TYPE_LABELS = {
     DiffType.MODIFIED: "diff_types.modified",
     DiffType.CONFLICT: "diff_types.conflict",
     DiffType.RENAMED: "diff_types.renamed",
+    DiffType.CASE_MISMATCH: "diff_types.case_mismatch",
     DiffType.ERROR_SOURCE: "diff_types.error_source",
     DiffType.ERROR_DEST: "diff_types.error_dest",
 }
@@ -101,6 +103,7 @@ ALLOWED_ACTIONS: dict[DiffType, list[SyncAction]] = {
     DiffType.SOURCE_ONLY: [SyncAction.COPY_TO_DEST, SyncAction.SKIP, SyncAction.MARK_REVIEW],
     DiffType.DEST_ONLY: [SyncAction.DELETE_FROM_DEST, SyncAction.MOVE_TO_TRASH, SyncAction.COPY_TO_SOURCE, SyncAction.SKIP, SyncAction.MARK_REVIEW],
     DiffType.MODIFIED: [SyncAction.OVERWRITE_DEST, SyncAction.OVERWRITE_SOURCE, SyncAction.KEEP_DEST, SyncAction.KEEP_SOURCE, SyncAction.SKIP, SyncAction.MARK_REVIEW],
+    DiffType.CASE_MISMATCH: [SyncAction.OVERWRITE_DEST, SyncAction.OVERWRITE_SOURCE, SyncAction.KEEP_DEST, SyncAction.KEEP_SOURCE, SyncAction.SKIP, SyncAction.MARK_REVIEW],
     DiffType.CONFLICT: [SyncAction.OVERWRITE_DEST, SyncAction.OVERWRITE_SOURCE, SyncAction.KEEP_DEST, SyncAction.KEEP_SOURCE, SyncAction.SKIP, SyncAction.MARK_REVIEW],
     DiffType.RENAMED: [SyncAction.RENAME_IN_DEST, SyncAction.COPY_TO_DEST, SyncAction.SKIP, SyncAction.MARK_REVIEW],
     DiffType.ERROR_SOURCE: [SyncAction.SKIP, SyncAction.MARK_REVIEW],
@@ -113,6 +116,7 @@ SUMMARY_KEY_TO_FILTER: dict[str, DiffType | str | None] = {
     "new_in_source": DiffType.SOURCE_ONLY,
     "modified": DiffType.MODIFIED,
     "dest_only": DiffType.DEST_ONLY,
+    "case_mismatch": DiffType.CASE_MISMATCH,
     "conflict_pending": "conflict_pending",
     "conflict_managed": "conflict_managed",
     "renamed": DiffType.RENAMED,
@@ -684,6 +688,7 @@ class ReviewScreen(QWidget):
         )
 
         panel_layout.addWidget(self._create_summary_cards_panel())
+        panel_layout.addWidget(self._create_empty_folders_banner())
         panel_layout.addWidget(self._create_pending_conflicts_banner())
         panel_layout.addWidget(self._create_space_check_panel())
         panel_layout.addWidget(self._create_destructive_warning_panel())
@@ -774,6 +779,56 @@ class ReviewScreen(QWidget):
         banner_layout.addWidget(self._pending_hint)
 
         return self._pending_banner
+
+    def _create_empty_folders_banner(self) -> QWidget:
+        self._empty_folders_banner = QFrame()
+        self._empty_folders_banner.setVisible(False)
+        self._empty_folders_banner.setStyleSheet(f"""
+            QFrame {{
+                background-color: #FFF3E0;
+                border: 1px solid {DesignSystem.COLOR_WARNING};
+                border-radius: {DesignSystem.RADIUS_MD}px;
+            }}
+        """)
+
+        banner_layout = QVBoxLayout(self._empty_folders_banner)
+        banner_layout.setContentsMargins(
+            DesignSystem.SPACE_16, DesignSystem.SPACE_12,
+            DesignSystem.SPACE_16, DesignSystem.SPACE_12,
+        )
+        banner_layout.setSpacing(DesignSystem.SPACE_8)
+
+        self._empty_folders_label = QLabel("")
+        self._empty_folders_label.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_MD}px; font-weight: bold; "
+            f"color: {DesignSystem.COLOR_WARNING}; border: none; background: transparent;"
+        )
+        self._empty_folders_label.setWordWrap(True)
+        banner_layout.addWidget(self._empty_folders_label)
+
+        self._empty_folders_scroll = QScrollArea()
+        self._empty_folders_scroll.setWidgetResizable(True)
+        self._empty_folders_scroll.setMaximumHeight(160)
+        self._empty_folders_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._empty_folders_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
+        self._empty_folders_list = QWidget()
+        self._empty_folders_list_layout = QVBoxLayout(self._empty_folders_list)
+        self._empty_folders_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._empty_folders_list_layout.setSpacing(DesignSystem.SPACE_4)
+        self._empty_folders_scroll.setWidget(self._empty_folders_list)
+        banner_layout.addWidget(self._empty_folders_scroll)
+
+        self._empty_folders_hint = QLabel("")
+        self._empty_folders_hint.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_SM}px; "
+            f"color: {DesignSystem.COLOR_TEXT_SECONDARY}; border: none; background: transparent;"
+        )
+        self._empty_folders_hint.setWordWrap(True)
+        banner_layout.addWidget(self._empty_folders_hint)
+
+        return self._empty_folders_banner
 
     def _create_space_check_panel(self) -> QWidget:
         self._space_group = QGroupBox(tr("review.space_check"))
@@ -913,6 +968,21 @@ class ReviewScreen(QWidget):
             self._pending_banner.setVisible(True)
         else:
             self._pending_banner.setVisible(False)
+
+        empty_source_count = len(getattr(self, '_source_empty_dirs', []))
+        empty_dest_count = len(getattr(self, '_dest_empty_dirs', []))
+        if empty_source_count > 0 or empty_dest_count > 0:
+            parts = []
+            if empty_source_count > 0:
+                parts.append(tr("review.empty_folders_source", count=empty_source_count))
+            if empty_dest_count > 0:
+                parts.append(tr("review.empty_folders_dest", count=empty_dest_count))
+            self._empty_folders_label.setText(" ".join(parts))
+            self._empty_folders_hint.setText(tr("review.empty_folders_hint"))
+            self._populate_empty_folders_list()
+            self._empty_folders_banner.setVisible(True)
+        else:
+            self._empty_folders_banner.setVisible(False)
 
         dest = self._dest_space
         src = self._source_space
@@ -1055,6 +1125,7 @@ class ReviewScreen(QWidget):
             ("new_in_source", DesignSystem.COLOR_DIFF_SOURCE_ONLY, "review.new_in_source"),
             ("modified", DesignSystem.COLOR_DIFF_MODIFIED, "review.modified"),
             ("dest_only", DesignSystem.COLOR_DIFF_DEST_ONLY, "review.dest_only"),
+            ("case_mismatch", DesignSystem.COLOR_DIFF_CASE_MISMATCH, "review.case_mismatch"),
             ("conflict_pending", DesignSystem.COLOR_DIFF_CONFLICT, "review.conflict_pending"),
             ("conflict_managed", DesignSystem.COLOR_SUCCESS, "review.conflict_managed"),
             ("renamed", DesignSystem.COLOR_DIFF_RENAMED, "review.renamed"),
@@ -1279,8 +1350,10 @@ class ReviewScreen(QWidget):
         self._base_source = source
         self._base_dest = dest
 
-    def set_entries(self, entries: list[ComparisonEntry]) -> None:
+    def set_entries(self, entries: list[ComparisonEntry], source_empty_dirs: list[str] | None = None, dest_empty_dirs: list[str] | None = None) -> None:
         self._entries = entries
+        self._source_empty_dirs = source_empty_dirs or []
+        self._dest_empty_dirs = dest_empty_dirs or []
         count = len(entries)
 
         if count > 10000:
@@ -1336,11 +1409,62 @@ class ReviewScreen(QWidget):
         if os.path.isfile(full_path):
             QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
 
+    def _populate_empty_folders_list(self) -> None:
+        while self._empty_folders_list_layout.count():
+            item = self._empty_folders_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        source_dirs = getattr(self, '_source_empty_dirs', [])
+        dest_dirs = getattr(self, '_dest_empty_dirs', [])
+
+        for rel_path in source_dirs:
+            row = QHBoxLayout()
+            row.setSpacing(DesignSystem.SPACE_8)
+            full_path = os.path.join(self._base_source, rel_path)
+            label = QLabel(f"[{tr('common.source')}] {full_path}")
+            label.setStyleSheet(
+                f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
+            )
+            label.setWordWrap(True)
+            row.addWidget(label, stretch=1)
+            open_btn = QPushButton("")
+            open_btn.setFixedSize(24, 24)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            icon_manager.set_button_icon(open_btn, "folder-open", color=DesignSystem.COLOR_PRIMARY)
+            open_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+            open_btn.setToolTip(tr("review.open_folder"))
+            open_btn.clicked.connect(lambda _, p=full_path: QDesktopServices.openUrl(QUrl.fromLocalFile(p)))
+            row.addWidget(open_btn)
+            self._empty_folders_list_layout.addLayout(row)
+
+        for rel_path in dest_dirs:
+            row = QHBoxLayout()
+            row.setSpacing(DesignSystem.SPACE_8)
+            full_path = os.path.join(self._base_dest, rel_path)
+            label = QLabel(f"[{tr('setup.destination')}] {full_path}")
+            label.setStyleSheet(
+                f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
+            )
+            label.setWordWrap(True)
+            row.addWidget(label, stretch=1)
+            open_btn = QPushButton("")
+            open_btn.setFixedSize(24, 24)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            icon_manager.set_button_icon(open_btn, "folder-open", color=DesignSystem.COLOR_PRIMARY)
+            open_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+            open_btn.setToolTip(tr("review.open_folder"))
+            open_btn.clicked.connect(lambda _, p=full_path: QDesktopServices.openUrl(QUrl.fromLocalFile(p)))
+            row.addWidget(open_btn)
+            self._empty_folders_list_layout.addLayout(row)
+
+        self._empty_folders_list_layout.addStretch()
+
     def _update_summary(self) -> None:
         counts: dict[str, int] = {
             "total": 0, "identical": 0, "new_in_source": 0,
-            "modified": 0, "dest_only": 0, "conflict_pending": 0,
-            "conflict_managed": 0, "renamed": 0,
+            "modified": 0, "dest_only": 0, "case_mismatch": 0,
+            "conflict_pending": 0, "conflict_managed": 0, "renamed": 0,
             "error_source": 0, "error_dest": 0,
         }
         counts["total"] = len(self._entries)
@@ -1353,6 +1477,8 @@ class ReviewScreen(QWidget):
                 counts["dest_only"] += 1
             elif entry.diff_type == DiffType.MODIFIED:
                 counts["modified"] += 1
+            elif entry.diff_type == DiffType.CASE_MISMATCH:
+                counts["case_mismatch"] += 1
             elif entry.diff_type == DiffType.CONFLICT:
                 if entry.action == SyncAction.MARK_REVIEW:
                     counts["conflict_pending"] += 1
@@ -1368,7 +1494,8 @@ class ReviewScreen(QWidget):
         label_keys = {
             "total": "review.total", "identical": "review.identical",
             "new_in_source": "review.new_in_source", "modified": "review.modified",
-            "dest_only": "review.dest_only", "conflict_pending": "review.conflict_pending",
+            "dest_only": "review.dest_only", "case_mismatch": "review.case_mismatch",
+            "conflict_pending": "review.conflict_pending",
             "conflict_managed": "review.conflict_managed", "renamed": "review.renamed",
             "error_source": "review.error_source", "error_dest": "review.error_dest",
         }

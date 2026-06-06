@@ -12,11 +12,17 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QPlainTextEdit,
     QSizePolicy,
+    QFrame,
+    QScrollArea,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl
+from PyQt6.QtGui import QDesktopServices
+
+import os
 
 from services.models import SyncReport
 from sync_app.styles.design_system import DesignSystem
+from sync_app.styles.icons import icon_manager
 from utils.i18n import tr
 from utils.format_utils import format_size, format_duration
 
@@ -34,6 +40,12 @@ class SummaryScreen(QWidget):
         super().__init__(parent)
         self._report: SyncReport | None = None
         self._dry_run_mode: bool = False
+        self._empty_source_count: int = 0
+        self._empty_dest_count: int = 0
+        self._empty_source_dirs: list[str] = []
+        self._empty_dest_dirs: list[str] = []
+        self._base_source: str = ""
+        self._base_dest: str = ""
 
         layout = QVBoxLayout(self)
         layout.setSpacing(DesignSystem.SPACE_16)
@@ -44,6 +56,8 @@ class SummaryScreen(QWidget):
         layout.addWidget(self._title)
 
         layout.addWidget(self._create_metrics())
+
+        layout.addWidget(self._create_empty_folders_banner())
 
         layout.addWidget(self._create_error_section())
 
@@ -89,6 +103,56 @@ class SummaryScreen(QWidget):
             layout.addWidget(card, stretch=1)
 
         return metrics
+
+    def _create_empty_folders_banner(self) -> QWidget:
+        self._empty_folders_banner = QFrame()
+        self._empty_folders_banner.setVisible(False)
+        self._empty_folders_banner.setStyleSheet(f"""
+            QFrame {{
+                background-color: #FFF3E0;
+                border: 1px solid {DesignSystem.COLOR_WARNING};
+                border-radius: {DesignSystem.RADIUS_MD}px;
+            }}
+        """)
+
+        banner_layout = QVBoxLayout(self._empty_folders_banner)
+        banner_layout.setContentsMargins(
+            DesignSystem.SPACE_16, DesignSystem.SPACE_12,
+            DesignSystem.SPACE_16, DesignSystem.SPACE_12,
+        )
+        banner_layout.setSpacing(DesignSystem.SPACE_8)
+
+        self._empty_folders_label = QLabel("")
+        self._empty_folders_label.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_MD}px; font-weight: bold; "
+            f"color: {DesignSystem.COLOR_WARNING}; border: none; background: transparent;"
+        )
+        self._empty_folders_label.setWordWrap(True)
+        banner_layout.addWidget(self._empty_folders_label)
+
+        self._empty_folders_scroll = QScrollArea()
+        self._empty_folders_scroll.setWidgetResizable(True)
+        self._empty_folders_scroll.setMaximumHeight(160)
+        self._empty_folders_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._empty_folders_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
+        self._empty_folders_list = QWidget()
+        self._empty_folders_list_layout = QVBoxLayout(self._empty_folders_list)
+        self._empty_folders_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._empty_folders_list_layout.setSpacing(DesignSystem.SPACE_4)
+        self._empty_folders_scroll.setWidget(self._empty_folders_list)
+        banner_layout.addWidget(self._empty_folders_scroll)
+
+        self._empty_folders_hint = QLabel("")
+        self._empty_folders_hint.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_SM}px; "
+            f"color: {DesignSystem.COLOR_TEXT_SECONDARY}; border: none; background: transparent;"
+        )
+        self._empty_folders_hint.setWordWrap(True)
+        banner_layout.addWidget(self._empty_folders_hint)
+
+        return self._empty_folders_banner
 
     def _create_error_section(self) -> QGroupBox:
         self._error_group = QGroupBox(tr("summary.errors_detail"))
@@ -155,8 +219,13 @@ class SummaryScreen(QWidget):
 
         return btn_row
 
-    def set_report(self, report: SyncReport) -> None:
+    def set_report(self, report: SyncReport, empty_source_count: int = 0, empty_dest_count: int = 0,
+                   empty_source_dirs: list[str] | None = None, empty_dest_dirs: list[str] | None = None) -> None:
         self._report = report
+        self._empty_source_count = empty_source_count
+        self._empty_dest_count = empty_dest_count
+        self._empty_source_dirs = empty_source_dirs or []
+        self._empty_dest_dirs = empty_dest_dirs or []
         if self._dry_run_mode:
             self._title.setText(tr("summary.title_dry_run"))
         else:
@@ -170,6 +239,19 @@ class SummaryScreen(QWidget):
         self._metric_labels["verified"].setText(str(report.verified))
         self._metric_labels["verification_failures"].setText(str(report.verification_failures))
 
+        if empty_source_count > 0 or empty_dest_count > 0:
+            parts = []
+            if empty_source_count > 0:
+                parts.append(tr("summary.empty_folders_source", count=empty_source_count))
+            if empty_dest_count > 0:
+                parts.append(tr("summary.empty_folders_dest", count=empty_dest_count))
+            self._empty_folders_label.setText(" ".join(parts))
+            self._empty_folders_hint.setText(tr("summary.empty_folders_hint"))
+            self._populate_empty_folders_list()
+            self._empty_folders_banner.setVisible(True)
+        else:
+            self._empty_folders_banner.setVisible(False)
+
         if report.errors:
             self._error_count_label.setText(f"{len(report.errors)} {tr('summary.errors').lower()}")
             self._error_list.setPlainText("\n".join(report.errors))
@@ -182,3 +264,55 @@ class SummaryScreen(QWidget):
 
     def set_dry_run_mode(self, enabled: bool) -> None:
         self._dry_run_mode = enabled
+
+    def set_base_paths(self, source: str, dest: str) -> None:
+        self._base_source = source
+        self._base_dest = dest
+
+    def _populate_empty_folders_list(self) -> None:
+        while self._empty_folders_list_layout.count():
+            item = self._empty_folders_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for rel_path in self._empty_source_dirs:
+            row = QHBoxLayout()
+            row.setSpacing(DesignSystem.SPACE_8)
+            full_path = os.path.join(self._base_source, rel_path)
+            label = QLabel(f"[{tr('common.source')}] {full_path}")
+            label.setStyleSheet(
+                f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
+            )
+            label.setWordWrap(True)
+            row.addWidget(label, stretch=1)
+            open_btn = QPushButton("")
+            open_btn.setFixedSize(24, 24)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            icon_manager.set_button_icon(open_btn, "folder-open", color=DesignSystem.COLOR_PRIMARY)
+            open_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+            open_btn.setToolTip(tr("review.open_folder"))
+            open_btn.clicked.connect(lambda _, p=full_path: QDesktopServices.openUrl(QUrl.fromLocalFile(p)))
+            row.addWidget(open_btn)
+            self._empty_folders_list_layout.addLayout(row)
+
+        for rel_path in self._empty_dest_dirs:
+            row = QHBoxLayout()
+            row.setSpacing(DesignSystem.SPACE_8)
+            full_path = os.path.join(self._base_dest, rel_path)
+            label = QLabel(f"[{tr('setup.destination')}] {full_path}")
+            label.setStyleSheet(
+                f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
+            )
+            label.setWordWrap(True)
+            row.addWidget(label, stretch=1)
+            open_btn = QPushButton("")
+            open_btn.setFixedSize(24, 24)
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            icon_manager.set_button_icon(open_btn, "folder-open", color=DesignSystem.COLOR_PRIMARY)
+            open_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+            open_btn.setToolTip(tr("review.open_folder"))
+            open_btn.clicked.connect(lambda _, p=full_path: QDesktopServices.openUrl(QUrl.fromLocalFile(p)))
+            row.addWidget(open_btn)
+            self._empty_folders_list_layout.addLayout(row)
+
+        self._empty_folders_list_layout.addStretch()

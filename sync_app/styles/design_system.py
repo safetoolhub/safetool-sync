@@ -60,6 +60,7 @@ class DesignSystem:
     COLOR_DIFF_DEST_ONLY = "#DC3545"
     COLOR_DIFF_CONFLICT = "#FFC107"
     COLOR_DIFF_RENAMED = "#6F42C1"
+    COLOR_DIFF_CASE_MISMATCH = "#17A2B8"
     COLOR_DIFF_ERROR = "#6C757D"
 
     # ── Stylesheet methods ───────────────────────────────────────────────

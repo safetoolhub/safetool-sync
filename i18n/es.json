@@ -178,6 +178,7 @@
     "conflict_pending": "Conflicto pendiente",
     "conflict_auto": "Conflicto gestionado",
     "renamed": "Renombrado",
+    "case_mismatch": "Solo difiere en mayúsculas/minúsculas",
     "error_source": "Error leyendo origen",
     "error_dest": "Error leyendo destino"
   },
@@ -198,6 +199,8 @@
     "conflict_auto_desc": "El conflicto ha sido resuelto: se ha asignado una acción concreta (sobrescribir origen, sobrescribir destino, conservar, etc.).",
     "renamed_name": "Renombrado",
     "renamed_desc": "El archivo fue renombrado o movido. Se detectó por coincidencia de contenido (hash SHA-256). Se renombrará en el destino en lugar de copiar y borrar.",
+    "case_mismatch_name": "Solo difiere en mayúsculas/minúsculas",
+    "case_mismatch_desc": "El archivo existe en ambos lados con el mismo nombre pero difiere solo en mayúsculas y minúsculas (p.ej. 'Foto.jpg' vs 'foto.jpg'). Común al sincronizar entre sistemas de archivos con diferente sensibilidad a mayúsculas. Por defecto se sobrescribe el destino para corregir el case.",
     "error_source_name": "Error en origen",
     "error_source_desc": "No se pudo leer el archivo en el origen (permisos, disco dañado, etc.). Se omitirá o marcará para revisión.",
     "error_dest_name": "Error en destino",
@@ -237,6 +240,7 @@
     "new_in_source": "Nuevos en origen",
     "modified": "Modificados",
     "dest_only": "Solo en destino",
+    "case_mismatch": "Solo difiere en mayúsculas",
     "conflicts": "Conflictos",
     "conflict_pending": "Conflicto pendiente",
     "conflict_managed": "Conflicto gestionado",
@@ -313,7 +317,10 @@
     "loading_entries": "Preparando vista de revisión...",
     "entries_to_load": "entradas detectadas",
     "tree_too_large": "Demasiados archivos para vista árbol. Usa la vista lista o aplica un filtro.",
-    "hide_identical": "Ocultar idénticos"
+    "hide_identical": "Ocultar idénticos",
+    "empty_folders_source": "{count} carpetas vacías solo en origen",
+    "empty_folders_dest": "{count} carpetas vacías solo en destino",
+    "empty_folders_hint": "Las carpetas vacías no se copian ni eliminan en modo espejo. Se mantienen intactas en ambos lados."
   },
   "conflict": {
     "title": "Asistente de Conflictos",
@@ -405,7 +412,10 @@
     "new_sync": "Nueva sincronización",
     "save_snapshot": "Guardar imagen del disco",
     "errors_detail": "Detalle de errores",
-    "no_errors": "Sin errores"
+    "no_errors": "Sin errores",
+    "empty_folders_source": "{count} carpetas vacías solo en origen",
+    "empty_folders_dest": "{count} carpetas vacías solo en destino",
+    "empty_folders_hint": "Las carpetas vacías no se copian ni eliminan en modo espejo. Se mantienen intactas en ambos lados."
   },
   "snapshots": {
     "title": "Imágenes de Disco",

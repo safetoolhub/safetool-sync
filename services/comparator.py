@@ -42,9 +42,11 @@ def compare(
     """
     source_index: dict[str, FileEntry] = {e.rel_path: e for e in source}
     dest_index: dict[str, FileEntry] = {e.rel_path: e for e in dest}
+    dest_lower_index: dict[str, FileEntry] = {e.rel_path.lower(): e for e in dest}
 
     results: list[ComparisonEntry] = []
     matched_paths: set[str] = set()
+    matched_lower_paths: set[str] = set()
 
     for path, src_entry in source_index.items():
         matched_paths.add(path)
@@ -64,16 +66,31 @@ def compare(
                 action=action,
             ))
         else:
-            results.append(ComparisonEntry(
-                rel_path=path,
-                diff_type=DiffType.SOURCE_ONLY,
-                source=src_entry,
-                dest=None,
-                action=SyncAction.COPY_TO_DEST,
-            ))
+            lower_path = path.lower()
+            if lower_path in dest_lower_index and lower_path not in matched_lower_paths:
+                dest_entry = dest_lower_index[lower_path]
+                diff_type = DiffType.CASE_MISMATCH
+                action = _default_action_for_diff(diff_type, policy, dest_only_default, conflict_action)
+                results.append(ComparisonEntry(
+                    rel_path=path,
+                    diff_type=diff_type,
+                    source=src_entry,
+                    dest=dest_entry,
+                    action=action,
+                ))
+                matched_lower_paths.add(lower_path)
+                matched_paths.add(path)
+            else:
+                results.append(ComparisonEntry(
+                    rel_path=path,
+                    diff_type=DiffType.SOURCE_ONLY,
+                    source=src_entry,
+                    dest=None,
+                    action=SyncAction.COPY_TO_DEST,
+                ))
 
     for path, dest_entry in dest_index.items():
-        if path not in matched_paths:
+        if path not in matched_paths and path.lower() not in matched_lower_paths:
             if direction == SyncDirection.BIDIRECTIONAL:
                 action = SyncAction.COPY_TO_SOURCE
             else:
@@ -202,6 +219,10 @@ def _default_action_for_diff(
     if diff_type == DiffType.SOURCE_ONLY:
         return SyncAction.COPY_TO_DEST
     if diff_type == DiffType.MODIFIED:
+        if policy == ConflictPolicy.MARK_PENDING:
+            return SyncAction.MARK_REVIEW
+        return SyncAction.OVERWRITE_DEST
+    if diff_type == DiffType.CASE_MISMATCH:
         if policy == ConflictPolicy.MARK_PENDING:
             return SyncAction.MARK_REVIEW
         return SyncAction.OVERWRITE_DEST

@@ -27,6 +27,7 @@ def scan_directory(
     """
     root = Path(root).resolve()
     entries: list[FileEntry] = []
+    empty_dirs: list[str] = []
     total_files = 0
     total_dirs = 0
     total_size = 0
@@ -67,6 +68,12 @@ def scan_directory(
         dirnames[:] = filtered_dirs
 
         total_dirs += len(filtered_dirs)
+
+        if not filtered_dirs and not filenames:
+            raw = str(rel_dir) if str(rel_dir) != "." else ""
+            if raw:
+                rel_path = raw.replace(os.sep, "/")
+                empty_dirs.append(rel_path)
 
         for fname in filenames:
             full_path = dirpath_obj / fname
@@ -116,6 +123,7 @@ def scan_directory(
         total_size=total_size,
         scan_time=scan_time,
         errors=errors,
+        empty_dirs=empty_dirs,
     )
 
 
