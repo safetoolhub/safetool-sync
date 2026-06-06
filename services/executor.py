@@ -381,7 +381,29 @@ def _fix_parent_case(target_path: Path, root: Path) -> bool:
     for part in parts:
         target_dir = current / part
         if not target_dir.exists():
-            current = target_dir
+            try:
+                parent_entries = [e.name for e in current.iterdir() if e.is_dir()]
+                actual_name = None
+                for entry_name in parent_entries:
+                    if entry_name.lower() == part.lower():
+                        actual_name = entry_name
+                        break
+
+                if actual_name:
+                    actual_dir = current / actual_name
+                    if actual_name != part:
+                        temp_dir = current / (part + "_tmp_case_fix")
+                        if temp_dir.exists():
+                            shutil.rmtree(str(temp_dir))
+                        os.rename(str(actual_dir), str(temp_dir))
+                        os.rename(str(temp_dir), str(target_dir))
+                        current = target_dir
+                    else:
+                        current = target_dir
+                else:
+                    current = target_dir
+            except OSError:
+                current = target_dir
             continue
 
         try:
