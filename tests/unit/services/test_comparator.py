@@ -126,3 +126,67 @@ class TestDefaultActionForDiff:
 
     def test_modified_overwrites(self):
         assert _default_action_for_diff(DiffType.MODIFIED, ConflictPolicy.SOURCE_WINS, SyncAction.MOVE_TO_TRASH) == SyncAction.OVERWRITE_DEST
+
+    def test_case_mismatch_overwrites(self):
+        assert _default_action_for_diff(DiffType.CASE_MISMATCH, ConflictPolicy.SOURCE_WINS, SyncAction.MOVE_TO_TRASH) == SyncAction.OVERWRITE_DEST
+
+    def test_case_mismatch_mark_review(self):
+        assert _default_action_for_diff(DiffType.CASE_MISMATCH, ConflictPolicy.MARK_PENDING, SyncAction.MOVE_TO_TRASH) == SyncAction.MARK_REVIEW
+
+
+class TestCaseMismatch:
+    def test_case_mismatch_file_detected(self):
+        source = [_entry("COCHE/file.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        dest = [_entry("coche/file.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        results = compare(source, dest, mode=CompareMode.SMART)
+        assert len(results) == 1
+        assert results[0].diff_type == DiffType.CASE_MISMATCH
+        assert results[0].action == SyncAction.OVERWRITE_DEST
+
+    def test_case_mismatch_nested_path(self):
+        source = [_entry("FOLDER/SUBFILE/data.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        dest = [_entry("folder/subfile/data.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        results = compare(source, dest, mode=CompareMode.SMART)
+        assert len(results) == 1
+        assert results[0].diff_type == DiffType.CASE_MISMATCH
+
+    def test_case_mismatch_not_detected_when_exact_match(self):
+        source = [_entry("file.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        dest = [_entry("file.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        results = compare(source, dest, mode=CompareMode.SMART)
+        assert len(results) == 1
+        assert results[0].diff_type == DiffType.IDENTICAL
+
+    def test_case_mismatch_mixed_with_normal_entries(self):
+        source = [
+            _entry("same.txt", size=100, mtime=1000.0, hash_sha256="hash1"),
+            _entry("COCHE/car.txt", size=100, mtime=1000.0, hash_sha256="hash2"),
+            _entry("new.txt", size=50, hash_sha256="hash3"),
+        ]
+        dest = [
+            _entry("same.txt", size=100, mtime=1000.0, hash_sha256="hash1"),
+            _entry("coche/car.txt", size=100, mtime=1000.0, hash_sha256="hash2"),
+            _entry("orphan.txt", size=30, hash_sha256="hash4"),
+        ]
+        results = compare(source, dest, mode=CompareMode.SMART)
+        by_path = {e.rel_path: e for e in results}
+        assert by_path["same.txt"].diff_type == DiffType.IDENTICAL
+        assert by_path["COCHE/car.txt"].diff_type == DiffType.CASE_MISMATCH
+        assert by_path["new.txt"].diff_type == DiffType.SOURCE_ONLY
+        assert by_path["orphan.txt"].diff_type == DiffType.DEST_ONLY
+
+    def test_case_mismatch_bidirectional(self):
+        source = [_entry("COCHE/file.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        dest = [_entry("coche/file.txt", size=100, mtime=1000.0, hash_sha256="abc")]
+        from services.models import SyncDirection
+        results = compare(source, dest, mode=CompareMode.SMART, direction=SyncDirection.BIDIRECTIONAL)
+        assert len(results) == 1
+        assert results[0].diff_type == DiffType.CASE_MISMATCH
+
+    def test_case_mismatch_with_different_content(self):
+        source = [_entry("COCHE/file.txt", size=200, mtime=2000.0, hash_sha256="src_hash")]
+        dest = [_entry("coche/file.txt", size=100, mtime=1000.0, hash_sha256="dst_hash")]
+        results = compare(source, dest, mode=CompareMode.SMART)
+        assert len(results) == 1
+        assert results[0].diff_type == DiffType.CASE_MISMATCH
+        assert results[0].action == SyncAction.OVERWRITE_DEST

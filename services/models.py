@@ -17,6 +17,7 @@ class DiffType(Enum):
     MODIFIED = "modified"
     CONFLICT = "conflict"
     RENAMED = "renamed"
+    CASE_MISMATCH = "case_mismatch"
     ERROR_SOURCE = "error_source"
     ERROR_DEST = "error_dest"
 
@@ -198,6 +199,7 @@ class ScanResult:
     total_size: int
     scan_time: float
     errors: list[str] = field(default_factory=list)
+    empty_dirs: list[str] = field(default_factory=list)
 
 
 @dataclass

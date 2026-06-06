@@ -20,7 +20,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
 from config import Config
-from services.models import CompareMode, ComparisonEntry, ConflictPolicy, ExclusionPreset, ScanResult, SyncAction, SyncDirection, SyncPlan, SyncReport, VerifyMode
+from services.models import CompareMode, ComparisonEntry, ConflictPolicy, ExclusionPreset, ScanResult, SyncAction, SyncDirection, SyncPlan, SyncPreset, SyncReport, VerifyMode
 from services.sync_state_manager import SyncStateManager
 from sync_app.styles.design_system import DesignSystem
 from sync_app.styles.icons import icon_manager
@@ -57,6 +57,8 @@ class MainWindow(QMainWindow):
         self._current_dest = ""
         self._source_entries: list = []
         self._dest_entries: list = []
+        self._source_empty_dirs: list = []
+        self._dest_empty_dirs: list = []
         self._comparison_entries: list[ComparisonEntry] = []
         self._sync_plan: Optional[SyncPlan] = None
         self._last_sync_report: Optional[SyncReport] = None
@@ -360,6 +362,7 @@ class MainWindow(QMainWindow):
             return
 
         self._source_entries = result.entries
+        self._source_empty_dirs = result.empty_dirs
         self._logger.info(f"Source scan complete: {result.total_files} files, {format_size(result.total_size)}")
 
         analysis = self._analysis_screen
@@ -390,6 +393,7 @@ class MainWindow(QMainWindow):
             return
 
         self._dest_entries = result.entries
+        self._dest_empty_dirs = result.empty_dirs
         self._logger.info(f"Dest scan complete: {result.total_files} files, {format_size(result.total_size)}")
 
         analysis = self._analysis_screen
@@ -523,7 +527,7 @@ class MainWindow(QMainWindow):
         review = self._ensure_screen('review')
         if review:
             review.set_base_paths(self._current_source, self._current_dest)
-            review.set_entries(result)
+            review.set_entries(result, self._source_empty_dirs, self._dest_empty_dirs)
         self.show_review()
 
     def _on_compare_error(self, error_msg: str) -> None:
@@ -589,14 +593,14 @@ class MainWindow(QMainWindow):
         self._logger.info("Back from manual review assistant — returning to review")
         review = self._ensure_screen('review')
         if review:
-            review.set_entries(self._comparison_entries)
+            review.set_entries(self._comparison_entries, self._source_empty_dirs, self._dest_empty_dirs)
         self.show_review()
 
     def _on_conflicts_resolved(self) -> None:
         self._logger.info("Manual review completed — returning to review")
         review = self._ensure_screen('review')
         if review:
-            review.set_entries(self._comparison_entries)
+            review.set_entries(self._comparison_entries, self._source_empty_dirs, self._dest_empty_dirs)
         self.show_review()
 
     def _on_execute(self) -> None:
@@ -606,9 +610,18 @@ class MainWindow(QMainWindow):
         setup = self._ensure_screen('setup')
         verify_mode_str = "FULL"
         use_trash = True
+        cleanup_empty = False
         if setup:
             verify_mode_str = setup.get_verify_mode().value
             use_trash = setup.get_use_trash()
+            preset = setup.get_selected_preset()
+            cleanup_empty = preset in (
+                SyncPreset.MIRROR_EXACT,
+                SyncPreset.MIRROR_SAFE,
+                SyncPreset.MIRROR_HASH,
+                SyncPreset.TWO_WAY_EXACT,
+                SyncPreset.TWO_WAY_HASH,
+            )
 
         execution = self._ensure_screen('execution')
         if execution:
@@ -622,6 +635,7 @@ class MainWindow(QMainWindow):
             dest_root=Path(self._current_dest),
             verify_mode=verify_mode_str,
             use_trash=use_trash,
+            cleanup_empty_dirs=cleanup_empty,
         )
         worker.progress.connect(self._on_sync_progress)
         worker.file_completed.connect(self._on_file_completed)
@@ -684,7 +698,9 @@ class MainWindow(QMainWindow):
         summary = self._ensure_screen('summary')
         if summary:
             summary.set_dry_run_mode(False)
-            summary.set_report(result)
+            summary.set_base_paths(self._current_source, self._current_dest)
+            summary.set_report(result, len(self._source_empty_dirs), len(self._dest_empty_dirs),
+                               self._source_empty_dirs, self._dest_empty_dirs)
         self.show_summary()
 
     def _on_sync_error(self, error_msg: str) -> None:
@@ -741,7 +757,9 @@ class MainWindow(QMainWindow):
         summary = self._ensure_screen('summary')
         if summary:
             summary.set_dry_run_mode(True)
-            summary.set_report(result)
+            summary.set_base_paths(self._current_source, self._current_dest)
+            summary.set_report(result, len(self._source_empty_dirs), len(self._dest_empty_dirs),
+                               self._source_empty_dirs, self._dest_empty_dirs)
         self.show_summary()
 
     def _on_pause_sync(self) -> None:

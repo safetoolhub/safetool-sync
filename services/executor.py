@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 from pathlib import Path
 from typing import Callable, Optional
 
 from config import Config
-from services.models import SyncAction, SyncPlan, SyncReport
+from services.models import DiffType, SyncAction, SyncPlan, SyncReport
+
+logger = logging.getLogger(__name__)
 
 
 def execute_plan(
@@ -19,6 +22,7 @@ def execute_plan(
     dest_root: Path,
     verify_mode: str = "FULL",
     use_trash: bool = True,
+    cleanup_empty_dirs: bool = False,
     progress_cb: Callable[[int, str], None] | None = None,
     file_completed_cb: Callable[[str, bool], None] | None = None,
     file_verified_cb: Callable[[str, bool], None] | None = None,
@@ -35,6 +39,7 @@ def execute_plan(
         dest_root: Root directory of the destination.
         verify_mode: "OFF", "SPOT_CHECK", or "FULL".
         use_trash: If True, use send2trash for MOVE_TO_TRASH actions.
+        cleanup_empty_dirs: If True, remove empty directories after deletions.
         progress_cb: Callback(percent, message).
         file_completed_cb: Callback(rel_path, success).
         file_verified_cb: Callback(rel_path, verified_ok).
@@ -103,7 +108,10 @@ def execute_plan(
                 continue
 
             if entry.action == SyncAction.COPY_TO_DEST:
-                success = _copy_file(src_path, dst_path)
+                if entry.diff_type == DiffType.CASE_MISMATCH:
+                    success = _overwrite_case_mismatch(src_path, dst_path, dest_root)
+                else:
+                    success = _copy_file(src_path, dst_path)
                 report.copied += 1
                 if success and verify_mode != "OFF":
                     should_verify = (
@@ -151,7 +159,10 @@ def execute_plan(
                     report.skipped += 1
 
             elif entry.action == SyncAction.OVERWRITE_DEST:
-                success = _copy_file(src_path, dst_path)
+                if entry.diff_type == DiffType.CASE_MISMATCH:
+                    success = _overwrite_case_mismatch(src_path, dst_path, dest_root)
+                else:
+                    success = _copy_file(src_path, dst_path)
                 report.overwritten += 1
                 if success and verify_mode != "OFF":
                     should_verify = (
@@ -248,12 +259,28 @@ def execute_plan(
         if state_manager and hasattr(state_manager, 'mark_completed'):
             state_manager.mark_completed(entry.rel_path, entry.action.value)
 
+    if cleanup_empty_dirs and not dry_run:
+        _do_cleanup(dest_root, progress_cb, cancel_check)
+
     return report
+
+
+def _clear_readonly(path: Path) -> None:
+    """Remove read-only attribute from a file, logging when successful."""
+    try:
+        if os.access(str(path), os.W_OK):
+            return
+        path.chmod(0o666)
+        logger.info("Removed read-only attribute: %s", path)
+    except OSError:
+        pass
 
 
 def _copy_file(src: Path, dst: Path) -> bool:
     """Copy a file, creating parent directories as needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        _clear_readonly(dst)
     shutil.copy2(str(src), str(dst))
     return True
 
@@ -263,6 +290,7 @@ def _delete_file(path: Path) -> bool:
     if path.is_dir():
         shutil.rmtree(str(path))
     elif path.exists():
+        _clear_readonly(path)
         path.unlink()
     return True
 
@@ -278,12 +306,15 @@ def _move_to_trash(path: Path, use_trash: bool = True) -> bool:
             pass
         except Exception:
             pass
+    _clear_readonly(path)
     return _delete_file(path)
 
 
 def _rename_file(old_path: Path, new_path: Path) -> bool:
     """Rename/move a file from old_path to new_path."""
     new_path.parent.mkdir(parents=True, exist_ok=True)
+    if new_path.exists():
+        _clear_readonly(new_path)
     os.rename(str(old_path), str(new_path))
     return True
 
@@ -308,3 +339,83 @@ def _hash_file(path: Path, block_size: int = Config.HASH_BLOCK_SIZE) -> str:
                 break
             sha.update(block)
     return sha.hexdigest()
+
+
+def _overwrite_case_mismatch(src_path: Path | None, dst_path: Path, dest_root: Path) -> bool:
+    """Handle CASE_MISMATCH overwrite by removing old case and creating correct case.
+
+    On case-insensitive filesystems (Windows), copying to a path with different
+    case won't change the existing directory/file case. This function:
+    1. Finds and removes the existing entry at the case-insensitive location
+    2. Fixes parent directory case if needed
+    3. Copies the source with the correct case
+    """
+    if src_path is None:
+        return False
+
+    _fix_parent_case(dst_path, dest_root)
+
+    if dst_path.exists():
+        if dst_path.is_dir():
+            shutil.rmtree(str(dst_path))
+        else:
+            _clear_readonly(dst_path)
+            dst_path.unlink()
+
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src_path), str(dst_path))
+    return True
+
+
+def _fix_parent_case(target_path: Path, root: Path) -> bool:
+    """Walk up from target_path to root, fixing directory case mismatches.
+
+    For each directory component, if the actual on-disk name differs in case
+    from the target name, rename it to match the target case.
+    """
+    parts = target_path.relative_to(root).parts[:-1]
+    if not parts:
+        return True
+
+    current = root
+    for part in parts:
+        target_dir = current / part
+        if not target_dir.exists():
+            current = target_dir
+            continue
+
+        try:
+            parent_entries = [e.name for e in current.iterdir() if e.is_dir()]
+            actual_name = None
+            for entry_name in parent_entries:
+                if entry_name.lower() == part.lower():
+                    actual_name = entry_name
+                    break
+
+            if actual_name and actual_name != part:
+                temp_dir = current / (part + "_tmp_case_fix")
+                if temp_dir.exists():
+                    shutil.rmtree(str(temp_dir))
+                actual_dir = current / actual_name
+                os.rename(str(actual_dir), str(temp_dir))
+                os.rename(str(temp_dir), str(target_dir))
+                current = target_dir
+            else:
+                current = target_dir
+        except OSError:
+            current = target_dir
+
+    return True
+
+
+def _do_cleanup(
+    root: Path,
+    progress_cb: Callable[[int, str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> None:
+    """Remove empty directories under root after sync operations."""
+    from services.cleanup import cleanup_empty_dirs
+
+    removed = cleanup_empty_dirs(root, progress_cb, cancel_check)
+    if removed:
+        logger.info("Cleaned up %d empty directories under %s", len(removed), root)
