@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QStackedWidget,
     QToolButton,
+    QApplication,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
@@ -99,6 +100,7 @@ class MainWindow(QMainWindow):
         from sync_app.screens.execution_screen import ExecutionScreen
         from sync_app.screens.summary_screen import SummaryScreen
         from sync_app.screens.snapshots_screen import SnapshotsScreen
+        from sync_app.screens.empty_folders_screen import EmptyFoldersScreen
 
         screen_map = {
             'setup': (SetupScreen, '_setup_screen'),
@@ -108,6 +110,7 @@ class MainWindow(QMainWindow):
             'execution': (ExecutionScreen, '_execution_screen'),
             'summary': (SummaryScreen, '_summary_screen'),
             'snapshots': (SnapshotsScreen, '_snapshots_screen'),
+            'empty_folders': (EmptyFoldersScreen, '_empty_folders_screen'),
         }
 
         if screen_class not in screen_map:
@@ -157,6 +160,8 @@ class MainWindow(QMainWindow):
         elif name == 'snapshots':
             screen.back_requested.connect(self.show_setup)
             screen.snapshot_requested.connect(self._on_take_snapshot)
+        elif name == 'empty_folders':
+            screen.back_requested.connect(self.show_setup)
 
     # ── Screen navigation ──────────────────────────────────────────────
 
@@ -189,6 +194,11 @@ class MainWindow(QMainWindow):
         screen = self._ensure_screen('snapshots')
         if screen:
             screen._refresh()
+            self._stack.setCurrentWidget(screen)
+
+    def show_empty_folders(self) -> None:
+        screen = self._ensure_screen('empty_folders')
+        if screen:
             self._stack.setCurrentWidget(screen)
 
     # ── Header ─────────────────────────────────────────────────────────
@@ -226,6 +236,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(brand)
 
         layout.addStretch()
+
+        btn_empty_folders = QToolButton()
+        btn_empty_folders.setAutoRaise(True)
+        btn_empty_folders.setToolTip(tr("header.empty_folders"))
+        icon_manager.set_button_icon(btn_empty_folders, "folder-search", color=DesignSystem.COLOR_TEXT_SECONDARY, size=20)
+        btn_empty_folders.setStyleSheet(DesignSystem.get_icon_button_style())
+        btn_empty_folders.clicked.connect(self.show_empty_folders)
+        layout.addWidget(btn_empty_folders)
 
         btn_snapshots = QToolButton()
         btn_snapshots.setAutoRaise(True)
@@ -372,7 +390,7 @@ class MainWindow(QMainWindow):
 
         self._dest_worker = ScanWorker(
             root=Path(self._current_dest),
-            exclusions=self._exclusions,
+            exclusions=[],
         )
         self._dest_worker.progress.connect(self._on_dest_scan_progress)
         self._dest_worker.finished.connect(self._on_dest_scan_finished)
@@ -544,31 +562,38 @@ class MainWindow(QMainWindow):
         self._logger.info("Sync requested from review — computing plan + space")
         if not self._comparison_entries:
             return
-        from services.planner import build_plan
-        from services.space_calculator import (
-            calculate_required_space_per_side,
-            check_destination_space,
-        )
+        
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            from services.planner import build_plan
+            from services.space_calculator import (
+                calculate_freed_space_per_side,
+                calculate_required_space_per_side,
+                check_destination_space,
+            )
 
-        setup = self._ensure_screen('setup')
-        use_trash = setup.get_use_trash() if setup else True
-        direction = setup.get_direction() if setup else SyncDirection.UNIDIRECTIONAL
+            setup = self._ensure_screen('setup')
+            use_trash = setup.get_use_trash() if setup else True
+            direction = setup.get_direction() if setup else SyncDirection.UNIDIRECTIONAL
 
-        plan = build_plan(self._comparison_entries, use_trash=use_trash)
-        self._sync_plan = plan
+            plan = build_plan(self._comparison_entries, use_trash=use_trash)
+            self._sync_plan = plan
 
-        dest_req, src_req = calculate_required_space_per_side(plan)
-        dest_space = check_destination_space(Path(self._current_dest), dest_req)
-        source_space = check_destination_space(Path(self._current_source), src_req)
+            dest_req, src_req = calculate_required_space_per_side(plan)
+            dest_freed, src_freed = calculate_freed_space_per_side(plan)
+            dest_space = check_destination_space(Path(self._current_dest), dest_req, dest_freed)
+            source_space = check_destination_space(Path(self._current_source), src_req, src_freed)
 
-        pending_conflicts = sum(
-            1 for e in self._comparison_entries
-            if e.diff_type.value == "conflict" and e.action == SyncAction.MARK_REVIEW
-        )
+            pending_conflicts = sum(
+                1 for e in self._comparison_entries
+                if e.diff_type.value == "conflict" and e.action == SyncAction.MARK_REVIEW
+            )
 
-        review = self._ensure_screen('review')
-        if review:
-            review.show_plan_panel(plan, dest_space, source_space, pending_conflicts, direction)
+            review = self._ensure_screen('review')
+            if review:
+                review.show_plan_panel(plan, dest_space, source_space, pending_conflicts, direction)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _on_resolve_conflicts(self) -> None:
         self._logger.info("Manual review requested")
@@ -646,7 +671,7 @@ class MainWindow(QMainWindow):
         self._sync_completed_count = 0
         self._sync_verified_count = 0
         self._sync_error_count = 0
-        self._sync_skipped_count = 0
+        self._sync_total_count = len(self._sync_plan.entries) if self._sync_plan else 0
         self._sync_failed_rel_paths: list[str] = []
         worker.start()
 
@@ -669,7 +694,7 @@ class MainWindow(QMainWindow):
                 self._sync_completed_count,
                 self._sync_verified_count,
                 self._sync_error_count,
-                self._sync_skipped_count,
+                self._sync_total_count,
             )
 
     def _on_file_verified(self, rel_path: str, verified: bool) -> None:
@@ -685,7 +710,7 @@ class MainWindow(QMainWindow):
                 self._sync_completed_count,
                 self._sync_verified_count,
                 self._sync_error_count,
-                self._sync_skipped_count,
+                self._sync_total_count,
             )
 
     def _on_sync_finished(self, result: object) -> None:
@@ -744,7 +769,7 @@ class MainWindow(QMainWindow):
         self._sync_completed_count = 0
         self._sync_verified_count = 0
         self._sync_error_count = 0
-        self._sync_skipped_count = 0
+        self._sync_total_count = len(self._sync_plan.entries) if self._sync_plan else 0
         self._sync_failed_rel_paths: list[str] = []
         worker.start()
 
@@ -875,6 +900,11 @@ class MainWindow(QMainWindow):
 
         self._logger.info(f"Snapshot will be saved to: {save_path_obj}")
 
+        disk_id = save_path_obj.stem
+        snapshots_screen = self._ensure_screen('snapshots')
+        if snapshots_screen:
+            snapshots_screen.mark_snapshot_saving(disk_id, True)
+
         worker = ScanWorker(root=Path(mount_point), exclusions=[])
 
         def _on_done(result: object) -> None:
@@ -882,9 +912,10 @@ class MainWindow(QMainWindow):
             if isinstance(result, ScanResult):
                 from services.snapshot_manager import SnapshotManager
                 mgr = SnapshotManager(snapshots_dir=save_path_obj.parent)
-                disk_id = save_path_obj.stem
                 mgr.save_snapshot(disk_id, label, result.entries)
                 self._logger.info(f"Snapshot saved: {save_path_obj} — {result.total_files} files")
+                if snapshots_screen:
+                    snapshots_screen.mark_snapshot_saving(disk_id, False)
                 QMessageBox.information(
                     self,
                     tr("setup.snapshot_save_dialog_title"),
@@ -893,6 +924,8 @@ class MainWindow(QMainWindow):
 
         def _on_err(msg: str) -> None:
             self._logger.error(f"Snapshot scan error: {msg}")
+            if snapshots_screen:
+                snapshots_screen.mark_snapshot_saving(disk_id, False)
             QMessageBox.warning(self, tr("common.error"), msg)
 
         worker.finished.connect(_on_done)

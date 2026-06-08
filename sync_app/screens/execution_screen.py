@@ -55,23 +55,7 @@ class ExecutionScreen(QWidget):
         title.setStyleSheet(f"font-size: {DesignSystem.SIZE_XL}px; font-weight: bold;")
         layout.addWidget(title)
 
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setStyleSheet(DesignSystem.get_progressbar_style())
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setTextVisible(False)
-        layout.addWidget(self._progress_bar)
-
-        progress_row = QHBoxLayout()
-        self._progress_label = QLabel("0%")
-        self._progress_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_LG}px; font-weight: bold; color: {DesignSystem.COLOR_PRIMARY};")
-        progress_row.addWidget(self._progress_label)
-
-        self._eta_label = QLabel("")
-        self._eta_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT_SECONDARY};")
-        self._eta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        progress_row.addWidget(self._eta_label)
-        layout.addLayout(progress_row)
+        layout.addWidget(self._create_progress_box())
 
         layout.addWidget(self._create_current_file_section())
 
@@ -125,6 +109,61 @@ class ExecutionScreen(QWidget):
 
         return frame
 
+    def _create_progress_box(self) -> QFrame:
+        frame = QFrame()
+        frame.setStyleSheet(
+            f"QFrame {{ background-color: {DesignSystem.COLOR_SURFACE}; "
+            f"border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT}; "
+            f"border-radius: {DesignSystem.RADIUS_MD}px; }}"
+        )
+        frame.setMinimumHeight(70)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(
+            DesignSystem.SPACE_16, DesignSystem.SPACE_12,
+            DesignSystem.SPACE_16, DesignSystem.SPACE_12,
+        )
+        layout.setSpacing(DesignSystem.SPACE_8)
+
+        header = QHBoxLayout()
+        title = QLabel(tr("execution.progress"))
+        title.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_SM}px; font-weight: bold; "
+            f"color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
+        )
+        header.addWidget(title)
+
+        self._progress_label = QLabel("0%")
+        self._progress_label.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_LG}px; font-weight: bold; "
+            f"color: {DesignSystem.COLOR_PRIMARY}; border: none; background: transparent;"
+        )
+        self._progress_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(self._progress_label)
+        layout.addLayout(header)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setStyleSheet(
+            f"QProgressBar {{ background-color: {DesignSystem.COLOR_BACKGROUND}; "
+            f"border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT}; "
+            f"border-radius: {DesignSystem.RADIUS_SM}px; height: 12px; }} "
+            f"QProgressBar::chunk {{ background-color: {DesignSystem.COLOR_PRIMARY}; "
+            f"border-radius: {DesignSystem.RADIUS_SM}px; }}"
+        )
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setTextVisible(False)
+        layout.addWidget(self._progress_bar)
+
+        self._eta_label = QLabel("")
+        self._eta_label.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_XS}px; color: {DesignSystem.COLOR_TEXT_SECONDARY}; "
+            f"border: none; background: transparent;"
+        )
+        self._eta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self._eta_label)
+
+        return frame
+
     def _create_counters(self) -> QWidget:
         counters = QWidget()
         layout = QHBoxLayout(counters)
@@ -133,10 +172,9 @@ class ExecutionScreen(QWidget):
 
         self._counter_labels: dict[str, QLabel] = {}
         counter_items = [
-            ("completed", DesignSystem.COLOR_SUCCESS),
+            ("progress", DesignSystem.COLOR_SUCCESS),
             ("verified", DesignSystem.COLOR_PRIMARY),
             ("errors", DesignSystem.COLOR_DANGER),
-            ("skipped", DesignSystem.COLOR_TEXT_SECONDARY),
         ]
 
         for key, color in counter_items:
@@ -150,7 +188,7 @@ class ExecutionScreen(QWidget):
             pair_layout.addWidget(value)
             self._counter_labels[key] = value
 
-            text = QLabel(tr(f"execution.{key}_count"))
+            text = QLabel(tr("execution.progress") if key == "progress" else tr(f"execution.{key}_count"))
             text.setStyleSheet(f"font-size: {DesignSystem.SIZE_XS}px; color: {DesignSystem.COLOR_TEXT_SECONDARY};")
             text.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pair_layout.addWidget(text)
@@ -252,11 +290,10 @@ class ExecutionScreen(QWidget):
             parts.append(tr("execution.speed", speed=format_speed(speed)))
         self._eta_label.setText(" | ".join(parts))
 
-    def set_counters(self, completed: int, verified: int, errors: int, skipped: int) -> None:
-        self._counter_labels["completed"].setText(str(completed))
+    def set_counters(self, completed: int, verified: int, errors: int, total: int = 0) -> None:
+        self._counter_labels["progress"].setText(f"{completed}/{total}" if total > 0 else str(completed))
         self._counter_labels["verified"].setText(str(verified))
         self._counter_labels["errors"].setText(str(errors))
-        self._counter_labels["skipped"].setText(str(skipped))
 
     def set_resources(self, cpu: float, ram_free: float, src_free: float, dst_free: float, write_speed: float) -> None:
         self._cpu_label.setText(tr("execution.cpu", percent=f"{cpu:.0f}"))
@@ -275,12 +312,13 @@ class ExecutionScreen(QWidget):
         self.pause_requested.emit()
 
     def reset(self) -> None:
+        self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_label.setText("0%")
         self._eta_label.setText("")
         self._action_label.setText("")
         self._current_file_label.setText(tr("execution.current_file") + ": —")
-        self.set_counters(0, 0, 0, 0)
+        self.set_counters(0, 0, 0)
         self._log.clear()
         self._is_paused = False
         self._pause_btn.setText(tr("execution.pause"))

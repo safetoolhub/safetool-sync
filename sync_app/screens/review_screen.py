@@ -32,6 +32,9 @@ from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QProgressBar,
+    QFileDialog,
+    QListWidget,
+    QListWidgetItem,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -45,6 +48,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QFont, QPen, QBrush
 from PyQt6.QtWidgets import QStyle
+import logging
 import os
 from datetime import datetime
 from typing import Optional
@@ -536,8 +540,103 @@ class _OpenFileDelegate(QStyledItemDelegate):
 # ReviewScreen — main widget
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class _EmptyFoldersPagination(QWidget):
+    """Pagination widget for empty folders list."""
+
+    page_changed = pyqtSignal(int)
+    page_size_changed = pyqtSignal(int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._current_page = 0
+        self._total_pages = 0
+        self._total_items = 0
+        self._page_size = 100
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(DesignSystem.SPACE_8)
+
+        self._page_size_combo = QComboBox()
+        for size in [50, 100, 200, 500]:
+            self._page_size_combo.addItem(f"{size} {tr('review.per_page')}")
+        self._page_size_combo.setCurrentIndex(1)
+        self._page_size_combo.setStyleSheet(DesignSystem.get_combobox_style())
+        self._page_size_combo.currentIndexChanged.connect(self._on_page_size_changed)
+        layout.addWidget(self._page_size_combo)
+
+        self._prev_btn = QPushButton()
+        icon_manager.set_button_icon(self._prev_btn, "chevron-left")
+        self._prev_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+        self._prev_btn.setFixedSize(28, 28)
+        self._prev_btn.clicked.connect(self._on_prev)
+        layout.addWidget(self._prev_btn)
+
+        self._page_label = QLabel("")
+        self._page_label.setStyleSheet(
+            f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT};"
+        )
+        layout.addWidget(self._page_label)
+
+        self._next_btn = QPushButton()
+        icon_manager.set_button_icon(self._next_btn, "chevron-right")
+        self._next_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+        self._next_btn.setFixedSize(28, 28)
+        self._next_btn.clicked.connect(self._on_next)
+        layout.addWidget(self._next_btn)
+
+        layout.addStretch()
+
+    def set_pagination(self, total_items: int, page_size: int) -> None:
+        self._total_items = total_items
+        self._page_size = page_size
+        self._total_pages = max(1, (total_items + page_size - 1) // page_size)
+        if self._current_page >= self._total_pages:
+            self._current_page = self._total_pages - 1
+        self._update_ui()
+
+    def set_page(self, page: int) -> None:
+        if 0 <= page < self._total_pages:
+            self._current_page = page
+            self._update_ui()
+            self.page_changed.emit(page)
+
+    def get_page(self) -> int:
+        return self._current_page
+
+    def get_page_size(self) -> int:
+        return self._page_size
+
+    def _on_prev(self) -> None:
+        self.set_page(self._current_page - 1)
+
+    def _on_next(self) -> None:
+        self.set_page(self._current_page + 1)
+
+    def _on_page_size_changed(self) -> None:
+        sizes = [50, 100, 200, 500]
+        idx = self._page_size_combo.currentIndex()
+        if 0 <= idx < len(sizes):
+            self._page_size = sizes[idx]
+            self._current_page = 0
+            self.set_pagination(self._total_items, self._page_size)
+            self.page_size_changed.emit(self._page_size)
+
+    def _update_ui(self) -> None:
+        self._prev_btn.setEnabled(self._current_page > 0)
+        self._next_btn.setEnabled(self._current_page < self._total_pages - 1)
+        if self._total_items == 0:
+            self._page_label.setText(tr("review.no_empty_folders"))
+        else:
+            start = self._current_page * self._page_size + 1
+            end = min((self._current_page + 1) * self._page_size, self._total_items)
+            self._page_label.setText(
+                f"{tr('review.showing')} {start}-{end} {tr('review.of')} {self._total_items}"
+            )
+
+
 class ReviewScreen(QWidget):
-    """Screen showing scan results with diff summary, filters, and actions.
+    """Screen showing scan results with diff summary, file list, filters, and action assignment.
 
     Optimized for 100k+ entries: uses QTableView with virtual model and
     custom delegates. Only visible rows (~20-30) are rendered at any time.
@@ -563,6 +662,9 @@ class ReviewScreen(QWidget):
         self._dest_space: Optional[SpaceCheckResult] = None
         self._source_space: Optional[SpaceCheckResult] = None
         self._pending_conflicts: int = 0
+        self._empty_folders_all: list[str] = []
+        self._empty_folders_page = 0
+        self._empty_folders_page_size = 100
 
         layout = QVBoxLayout(self)
         layout.setSpacing(DesignSystem.SPACE_12)
@@ -798,27 +900,44 @@ class ReviewScreen(QWidget):
         )
         banner_layout.setSpacing(DesignSystem.SPACE_8)
 
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(DesignSystem.SPACE_8)
+
         self._empty_folders_label = QLabel("")
         self._empty_folders_label.setStyleSheet(
             f"font-size: {DesignSystem.SIZE_MD}px; font-weight: bold; "
             f"color: {DesignSystem.COLOR_WARNING}; border: none; background: transparent;"
         )
         self._empty_folders_label.setWordWrap(True)
-        banner_layout.addWidget(self._empty_folders_label)
+        header_layout.addWidget(self._empty_folders_label, stretch=1)
 
-        self._empty_folders_scroll = QScrollArea()
-        self._empty_folders_scroll.setWidgetResizable(True)
-        self._empty_folders_scroll.setMaximumHeight(160)
-        self._empty_folders_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._empty_folders_scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-        )
-        self._empty_folders_list = QWidget()
-        self._empty_folders_list_layout = QVBoxLayout(self._empty_folders_list)
-        self._empty_folders_list_layout.setContentsMargins(0, 0, 0, 0)
-        self._empty_folders_list_layout.setSpacing(DesignSystem.SPACE_4)
-        self._empty_folders_scroll.setWidget(self._empty_folders_list)
-        banner_layout.addWidget(self._empty_folders_scroll)
+        self._export_empty_btn = QPushButton(tr("review.export_empty_folders"))
+        self._export_empty_btn.setToolTip(tr("review.export_empty_folders_tooltip"))
+        self._export_empty_btn.setStyleSheet(DesignSystem.get_secondary_button_style())
+        icon_manager.set_button_icon(self._export_empty_btn, "export")
+        self._export_empty_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._export_empty_btn.clicked.connect(self._on_export_empty_folders)
+        header_layout.addWidget(self._export_empty_btn)
+
+        banner_layout.addLayout(header_layout)
+
+        self._empty_folders_list = QListWidget()
+        self._empty_folders_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._empty_folders_list.setAlternatingRowColors(True)
+        self._empty_folders_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._empty_folders_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._empty_folders_list.setStyleSheet(DesignSystem.get_table_style())
+        self._empty_folders_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._empty_folders_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._empty_folders_list.itemClicked.connect(self._on_empty_folder_clicked)
+
+        banner_layout.addWidget(self._empty_folders_list, stretch=1)
+
+        self._empty_folders_pagination = _EmptyFoldersPagination(self)
+        self._empty_folders_pagination.page_changed.connect(self._on_empty_folder_page_changed)
+        self._empty_folders_pagination.page_size_changed.connect(self._on_empty_folder_page_size_changed)
+        banner_layout.addWidget(self._empty_folders_pagination)
 
         self._empty_folders_hint = QLabel("")
         self._empty_folders_hint.setStyleSheet(
@@ -979,7 +1098,7 @@ class ReviewScreen(QWidget):
                 parts.append(tr("review.empty_folders_dest", count=empty_dest_count))
             self._empty_folders_label.setText(" ".join(parts))
             self._empty_folders_hint.setText(tr("review.empty_folders_hint"))
-            self._populate_empty_folders_list()
+            self._populate_empty_folders_table()
             self._empty_folders_banner.setVisible(True)
         else:
             self._empty_folders_banner.setVisible(False)
@@ -990,9 +1109,16 @@ class ReviewScreen(QWidget):
         src_required = src.required_bytes if src else 0
 
         if dest is not None and dest_required > 0:
-            self._dest_space_label.setText(
-                tr("review.space_check_dest", free=format_size(dest.free_bytes), required=format_size(dest.required_bytes))
-            )
+            if dest.freed_bytes > 0:
+                space_text = tr(
+                    "review.space_check_dest_with_freed",
+                    free=format_size(dest.free_bytes),
+                    required=format_size(dest.required_bytes),
+                    freed=format_size(dest.freed_bytes),
+                )
+            else:
+                space_text = tr("review.space_check_dest", free=format_size(dest.free_bytes), required=format_size(dest.required_bytes))
+            self._dest_space_label.setText(space_text)
             self._dest_space_label.setVisible(True)
             if not dest.sufficient:
                 self._dest_space_warning_label.setText(
@@ -1006,9 +1132,16 @@ class ReviewScreen(QWidget):
             self._dest_space_warning_label.setVisible(False)
 
         if src is not None and src_required > 0:
-            self._source_space_label.setText(
-                tr("review.space_check_source", free=format_size(src.free_bytes), required=format_size(src.required_bytes))
-            )
+            if src.freed_bytes > 0:
+                space_text = tr(
+                    "review.space_check_source_with_freed",
+                    free=format_size(src.free_bytes),
+                    required=format_size(src.required_bytes),
+                    freed=format_size(src.freed_bytes),
+                )
+            else:
+                space_text = tr("review.space_check_source", free=format_size(src.free_bytes), required=format_size(src.required_bytes))
+            self._source_space_label.setText(space_text)
             self._source_space_label.setVisible(True)
             if not src.sufficient:
                 self._source_space_warning_label.setText(
@@ -1409,56 +1542,44 @@ class ReviewScreen(QWidget):
         if os.path.isfile(full_path):
             QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
 
-    def _populate_empty_folders_list(self) -> None:
-        while self._empty_folders_list_layout.count():
-            item = self._empty_folders_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
+    def _populate_empty_folders_table(self) -> None:
         source_dirs = getattr(self, '_source_empty_dirs', [])
         dest_dirs = getattr(self, '_dest_empty_dirs', [])
 
-        for rel_path in source_dirs:
-            row = QHBoxLayout()
-            row.setSpacing(DesignSystem.SPACE_8)
-            full_path = os.path.join(self._base_source, rel_path)
-            label = QLabel(f"[{tr('common.source')}] {full_path}")
-            label.setStyleSheet(
-                f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
-            )
-            label.setWordWrap(True)
-            row.addWidget(label, stretch=1)
-            open_btn = QPushButton("")
-            open_btn.setFixedSize(24, 24)
-            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            icon_manager.set_button_icon(open_btn, "folder-open", color=DesignSystem.COLOR_PRIMARY)
-            open_btn.setStyleSheet(DesignSystem.get_icon_button_style())
-            open_btn.setToolTip(tr("review.open_folder"))
-            open_btn.clicked.connect(lambda _, p=full_path: QDesktopServices.openUrl(QUrl.fromLocalFile(p)))
-            row.addWidget(open_btn)
-            self._empty_folders_list_layout.addLayout(row)
+        self._empty_folders_all = [os.path.join(self._base_source, p) for p in source_dirs] + [os.path.join(self._base_dest, p) for p in dest_dirs]
+        self._empty_folders_page = 0
+        self._load_empty_folders_page()
 
-        for rel_path in dest_dirs:
-            row = QHBoxLayout()
-            row.setSpacing(DesignSystem.SPACE_8)
-            full_path = os.path.join(self._base_dest, rel_path)
-            label = QLabel(f"[{tr('setup.destination')}] {full_path}")
-            label.setStyleSheet(
-                f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT}; border: none; background: transparent;"
-            )
-            label.setWordWrap(True)
-            row.addWidget(label, stretch=1)
-            open_btn = QPushButton("")
-            open_btn.setFixedSize(24, 24)
-            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            icon_manager.set_button_icon(open_btn, "folder-open", color=DesignSystem.COLOR_PRIMARY)
-            open_btn.setStyleSheet(DesignSystem.get_icon_button_style())
-            open_btn.setToolTip(tr("review.open_folder"))
-            open_btn.clicked.connect(lambda _, p=full_path: QDesktopServices.openUrl(QUrl.fromLocalFile(p)))
-            row.addWidget(open_btn)
-            self._empty_folders_list_layout.addLayout(row)
+        total = len(self._empty_folders_all)
+        self._empty_folders_pagination.set_pagination(total, self._empty_folders_page_size)
 
-        self._empty_folders_list_layout.addStretch()
+    def _on_empty_folder_page_changed(self, page: int) -> None:
+        self._empty_folders_page = page
+        self._load_empty_folders_page()
+
+    def _on_empty_folder_page_size_changed(self, page_size: int) -> None:
+        self._empty_folders_page_size = page_size
+        self._empty_folders_page = 0
+        self._load_empty_folders_page()
+
+    def _load_empty_folders_page(self) -> None:
+        self._empty_folders_list.clear()
+        total = len(self._empty_folders_all)
+        page_size = self._empty_folders_page_size
+        start = self._empty_folders_page * page_size
+        end = min(start + page_size, total)
+
+        for full_path in self._empty_folders_all[start:end]:
+            item = QListWidgetItem(full_path)
+            item.setToolTip(full_path)
+            self._empty_folders_list.addItem(item)
+
+        self._empty_folders_pagination.set_pagination(total, page_size)
+
+    def _on_empty_folder_clicked(self, item: QListWidgetItem) -> None:
+        full_path = item.text()
+        if full_path and os.path.isdir(full_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
 
     def _update_summary(self) -> None:
         counts: dict[str, int] = {
@@ -1808,3 +1929,56 @@ class ReviewScreen(QWidget):
             self._update_summary()
             self._refresh_view()
             self._hide_plan_panel()
+
+    def _on_export_empty_folders(self) -> None:
+        logger = logging.getLogger(__name__)
+        source_dirs = getattr(self, "_source_empty_dirs", [])
+        dest_dirs = getattr(self, "_dest_empty_dirs", [])
+        if not source_dirs and not dest_dirs:
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("review.export_empty_folders_title"),
+            "",
+            tr("review.txt_filter"),
+        )
+        if not file_path:
+            return
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"{tr('review.export_empty_report_title')}\n")
+                gen_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"{tr('review.export_empty_report_generated', date=gen_date)}\n")
+                f.write(f"{tr('review.export_empty_report_source', path=self._base_source)}\n")
+                f.write(f"{tr('review.export_empty_report_dest', path=self._base_dest)}\n")
+                f.write("\n" + "=" * 80 + "\n\n")
+                if source_dirs:
+                    f.write(f"{tr('review.empty_folders_source', count=len(source_dirs))}:\n")
+                    f.write("-" * 40 + "\n")
+                    for i, rel_path in enumerate(source_dirs, 1):
+                        full_path = os.path.join(self._base_source, rel_path)
+                        f.write(f"{i:4d}. {rel_path}\n")
+                        f.write(f"      {full_path}\n\n")
+                    f.write("\n")
+                if dest_dirs:
+                    f.write(f"{tr('review.empty_folders_dest', count=len(dest_dirs))}:\n")
+                    f.write("-" * 40 + "\n")
+                    for i, rel_path in enumerate(dest_dirs, 1):
+                        full_path = os.path.join(self._base_dest, rel_path)
+                        f.write(f"{i:4d}. {rel_path}\n")
+                        f.write(f"      {full_path}\n\n")
+            dir_path = os.path.dirname(file_path)
+            file_name = os.path.basename(file_path)
+            logger.info("Empty folders exported to %s in %s", file_name, dir_path)
+            QMessageBox.information(
+                self,
+                tr("review.export_empty_folders_title"),
+                tr("review.export_empty_folders_success"),
+            )
+        except Exception as e:
+            logger.error("Error exporting empty folders: %s", e)
+            QMessageBox.critical(
+                self,
+                tr("common.error"),
+                tr("review.export_empty_folders_error", error=str(e)),
+            )

@@ -35,6 +35,8 @@ class SnapshotsScreen(QWidget):
 
     back_requested = pyqtSignal()
     snapshot_requested = pyqtSignal(str, str)
+    snapshot_save_started = pyqtSignal(str)
+    snapshot_save_finished = pyqtSignal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -44,6 +46,8 @@ class SnapshotsScreen(QWidget):
         self._show_all_drives = False
         self._compare_results: list = []
         self._in_compare_mode = False
+        self._snapshot_saving_ids: list[str] = []
+        self._comparing = False
 
         layout = QVBoxLayout(self)
         layout.setSpacing(DesignSystem.SPACE_12)
@@ -70,7 +74,7 @@ class SnapshotsScreen(QWidget):
         splitter.addWidget(self._create_disk_detection())
         splitter.addWidget(self._create_snapshot_list())
         splitter.addWidget(self._create_explorer())
-        splitter.setSizes([350, 250, 500])
+        splitter.setSizes([240, 310, 550])
         layout.addWidget(splitter, stretch=1)
 
         self._refresh()
@@ -113,6 +117,11 @@ class SnapshotsScreen(QWidget):
         self._snapshot_scroll_area.setWidget(self._snapshot_cards_container)
         layout.addWidget(self._snapshot_scroll_area)
 
+        self._snapshot_status_label = QLabel("")
+        self._snapshot_status_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT_SECONDARY};")
+        self._snapshot_status_label.setVisible(False)
+        layout.addWidget(self._snapshot_status_label)
+
         return group
 
     def _create_explorer(self) -> QWidget:
@@ -125,23 +134,26 @@ class SnapshotsScreen(QWidget):
         compare_layout = QVBoxLayout(compare_group)
         compare_layout.setSpacing(DesignSystem.SPACE_6)
 
-        selectors_row = QHBoxLayout()
-        selectors_row.setSpacing(DesignSystem.SPACE_6)
+        selectors_column = QVBoxLayout()
+        selectors_column.setSpacing(DesignSystem.SPACE_6)
 
         self._compare_a_combo = QComboBox()
         self._compare_a_combo.setStyleSheet(DesignSystem.get_combobox_style())
         self._compare_b_combo = QComboBox()
         self._compare_b_combo.setStyleSheet(DesignSystem.get_combobox_style())
 
-        selectors_row.addWidget(self._compare_a_combo, stretch=1)
+        selectors_column.addWidget(self._compare_a_combo, stretch=0)
         vs_label = QLabel(tr("snapshots.compare_vs"))
         vs_label.setStyleSheet(f"font-weight: bold; color: {DesignSystem.COLOR_TEXT_SECONDARY};")
-        selectors_row.addWidget(vs_label)
-        selectors_row.addWidget(self._compare_b_combo, stretch=1)
-        compare_layout.addLayout(selectors_row)
+        vs_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        selectors_column.addWidget(vs_label, stretch=0)
+        selectors_column.addWidget(self._compare_b_combo, stretch=0)
+        compare_layout.addLayout(selectors_column)
 
         actions_row = QHBoxLayout()
         actions_row.setSpacing(DesignSystem.SPACE_6)
+
+        self._comparing = False
 
         self._compare_btn = QPushButton(tr("snapshots.compare_run"))
         self._compare_btn.setStyleSheet(DesignSystem.get_primary_button_style())
@@ -220,14 +232,20 @@ class SnapshotsScreen(QWidget):
         layout = QVBoxLayout(group)
 
         header_row = QHBoxLayout()
-        self._drive_filter_btn = QPushButton(tr("setup.disk_external_only"))
-        self._drive_filter_btn.setStyleSheet(DesignSystem.get_secondary_button_style())
-        self._drive_filter_btn.clicked.connect(self._toggle_drive_filter)
-        header_row.addWidget(self._drive_filter_btn)
         header_row.addStretch()
 
-        refresh_btn = QPushButton(tr("common.refresh"))
-        refresh_btn.setStyleSheet(DesignSystem.get_secondary_button_style())
+        self._drive_filter_btn = QToolButton()
+        self._drive_filter_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+        self._drive_filter_btn.setToolTip(tr("setup.disk_all_drives"))
+        icon_manager.set_button_icon(self._drive_filter_btn, "usb", size=18)
+        self._drive_filter_btn.clicked.connect(self._toggle_drive_filter)
+        header_row.addWidget(self._drive_filter_btn)
+
+        refresh_btn = QToolButton()
+        refresh_btn.setStyleSheet(DesignSystem.get_icon_button_style())
+        refresh_btn.setToolTip(tr("common.refresh"))
+        refresh_btn.setAutoRaise(True)
+        icon_manager.set_button_icon(refresh_btn, "sync", size=18)
         refresh_btn.clicked.connect(self._refresh_disks)
         header_row.addWidget(refresh_btn)
         layout.addLayout(header_row)
@@ -257,8 +275,10 @@ class SnapshotsScreen(QWidget):
 
     def _toggle_drive_filter(self) -> None:
         self._show_all_drives = not getattr(self, "_show_all_drives", False)
-        label = tr("setup.disk_all_drives") if not self._show_all_drives else tr("setup.disk_external_only")
-        self._drive_filter_btn.setText(label)
+        tooltip = tr("setup.disk_all_drives") if not self._show_all_drives else tr("setup.disk_external_only")
+        self._drive_filter_btn.setToolTip(tooltip)
+        icon_name = "harddisk" if self._show_all_drives else "usb"
+        icon_manager.set_button_icon(self._drive_filter_btn, icon_name, size=18)
         self._refresh_disks()
 
     def _refresh_disks(self) -> None:
@@ -290,30 +310,52 @@ class SnapshotsScreen(QWidget):
         from PyQt6.QtWidgets import QFrame
         card = QFrame()
         card.setStyleSheet(DesignSystem.get_disk_card_style())
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(DesignSystem.SPACE_10, DesignSystem.SPACE_8, DesignSystem.SPACE_10, DesignSystem.SPACE_8)
+        
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(DesignSystem.SPACE_10, DesignSystem.SPACE_6, DesignSystem.SPACE_10, DesignSystem.SPACE_6)
         card_layout.setSpacing(DesignSystem.SPACE_8)
 
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
-        name_label = QLabel(f"{drive.label}")
+        info_layout.setSpacing(1)
+        
+        if drive.label and drive.label != drive.mount_point:
+            name_text = f"{drive.label} ({drive.mount_point})"
+        else:
+            name_text = f"{drive.mount_point}"
+            
+        name_label = QLabel(name_text)
         name_label.setStyleSheet(f"font-weight: bold; font-size: {DesignSystem.SIZE_BASE}px; border: none; padding: 0;")
         info_layout.addWidget(name_label)
 
-        detail_text = f"{drive.mount_point}  —  {format_size(drive.free_bytes)} / {format_size(drive.total_bytes)}  ({drive.fstype})"
+        detail_text = f"{format_size(drive.free_bytes)} / {format_size(drive.total_bytes)} • {drive.fstype}"
         detail_label = QLabel(detail_text)
         detail_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT_SECONDARY}; border: none; padding: 0;")
         info_layout.addWidget(detail_label)
         card_layout.addLayout(info_layout, stretch=1)
 
-        btn = QPushButton(tr("setup.save_disk_snapshot"))
-        btn.setToolTip(tr("setup.snapshot_saving"))
-        btn.setStyleSheet(DesignSystem.get_disk_action_button_style("#FFF3E0"))
+        btn = QToolButton()
+        btn.setStyleSheet(f"""
+            QToolButton {{
+                background-color: #FFF3E0;
+                border: 1px solid #FFE0B2;
+                border-radius: {DesignSystem.RADIUS_SM}px;
+            }}
+            QToolButton:hover {{
+                background-color: #FFE0B2;
+                border-color: #FFB74D;
+            }}
+            QToolButton:pressed {{
+                background-color: #FFB74D;
+            }}
+        """)
+        btn.setToolTip(tr("setup.save_disk_snapshot"))
+        btn.setFixedSize(32, 32)
+        icon_manager.set_button_icon(btn, "camera-plus-outline", size=18)
         
         mount = drive.mount_point
         label = drive.label
         btn.clicked.connect(lambda _, m=mount, l=label: self.snapshot_requested.emit(m, l))
-        card_layout.addWidget(btn)
+        card_layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         return card
 
@@ -323,12 +365,13 @@ class SnapshotsScreen(QWidget):
         card = QFrame()
         card.setStyleSheet(DesignSystem.get_disk_card_style())
         card.setProperty("disk_id", snap.disk_id)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(DesignSystem.SPACE_8, DesignSystem.SPACE_6, DesignSystem.SPACE_8, DesignSystem.SPACE_6)
-        card_layout.setSpacing(DesignSystem.SPACE_4)
+        
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(DesignSystem.SPACE_10, DesignSystem.SPACE_6, DesignSystem.SPACE_10, DesignSystem.SPACE_6)
+        card_layout.setSpacing(DesignSystem.SPACE_8)
 
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
+        info_layout.setSpacing(1)
         
         first_row = QHBoxLayout()
         first_row.setSpacing(DesignSystem.SPACE_8)
@@ -347,28 +390,67 @@ class SnapshotsScreen(QWidget):
         date_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT_SECONDARY}; border: none; padding: 0;")
         info_layout.addWidget(date_label)
 
-        db_path = self._manager._db_path(snap.disk_id)
-        path_label = QLabel(str(db_path))
-        path_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_XS}px; color: {DesignSystem.COLOR_TEXT_SECONDARY}; border: none; padding: 0;")
-        path_label.setWordWrap(True)
-        info_layout.addWidget(path_label)
-
-        card_layout.addLayout(info_layout)
+        card_layout.addLayout(info_layout, stretch=1)
 
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(DesignSystem.SPACE_4)
 
-        view_btn = QPushButton(tr("snapshots.view_snapshot"))
-        view_btn.setStyleSheet(DesignSystem.get_disk_action_button_style("#E3F2FD"))
-        view_btn.clicked.connect(lambda: self._on_view_snapshot(snap.disk_id))
-        buttons_layout.addWidget(view_btn)
+        if snap.disk_id in self._snapshot_saving_ids:
+            saving_label = QLabel(tr("common.loading"))
+            saving_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_ACCENT}; border: none; padding: 0;")
+            buttons_layout.addWidget(saving_label)
+        else:
+            view_btn = QToolButton()
+            view_btn.setStyleSheet(DesignSystem.get_disk_action_button_style("#E3F2FD"))
+            view_btn.setToolTip(tr("snapshots.view_snapshot"))
+            view_btn.setAutoRaise(False)
+            icon_manager.set_button_icon(view_btn, "magnify", size=18)
+            view_btn.clicked.connect(lambda: self._on_view_snapshot(snap.disk_id))
+            view_btn.setFixedSize(30, 30)
+            buttons_layout.addWidget(view_btn)
 
-        delete_btn = QPushButton(tr("snapshots.delete_snapshot"))
-        delete_btn.setStyleSheet(DesignSystem.get_disk_action_button_style("#FFEBEE"))
-        delete_btn.clicked.connect(lambda: self._on_delete_snapshot_by_id(snap.disk_id))
-        buttons_layout.addWidget(delete_btn)
+            delete_btn = QToolButton()
+            delete_btn.setStyleSheet(DesignSystem.get_disk_action_button_style("#FFEBEE"))
+            delete_btn.setToolTip(tr("snapshots.delete_snapshot"))
+            delete_btn.setAutoRaise(False)
+            icon_manager.set_button_icon(delete_btn, "trash-can-outline", size=18)
+            delete_btn.clicked.connect(lambda: self._on_delete_snapshot_by_id(snap.disk_id))
+            delete_btn.setFixedSize(30, 30)
+            buttons_layout.addWidget(delete_btn)
 
         card_layout.addLayout(buttons_layout)
+
+        db_path = self._manager._db_path(snap.disk_id)
+        card.setToolTip(str(db_path))
+
+        return card
+
+    def _create_saving_card(self, disk_id: str) -> QWidget:
+        """Create a card widget for a snapshot being saved."""
+        from PyQt6.QtWidgets import QFrame
+        card = QFrame()
+        card.setStyleSheet(DesignSystem.get_disk_card_style())
+        card.setProperty("disk_id", disk_id)
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(DesignSystem.SPACE_10, DesignSystem.SPACE_6, DesignSystem.SPACE_10, DesignSystem.SPACE_6)
+        card_layout.setSpacing(DesignSystem.SPACE_8)
+
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(1)
+        
+        name_label = QLabel(tr("setup.snapshot_saving"))
+        name_label.setStyleSheet(f"font-weight: bold; font-size: {DesignSystem.SIZE_BASE}px; color: {DesignSystem.COLOR_DANGER}; border: none; padding: 0;")
+        info_layout.addWidget(name_label)
+
+        date_label = QLabel(tr("common.loading"))
+        date_label.setStyleSheet(f"font-size: {DesignSystem.SIZE_SM}px; color: {DesignSystem.COLOR_TEXT_SECONDARY}; border: none; padding: 0;")
+        info_layout.addWidget(date_label)
+
+        card_layout.addLayout(info_layout, stretch=1)
+
+        loading_icon = QLabel()
+        icon_manager.set_label_icon(loading_icon, "sync", color=DesignSystem.COLOR_TEXT_SECONDARY, size=18)
+        card_layout.addWidget(loading_icon, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         return card
 
@@ -387,22 +469,37 @@ class SnapshotsScreen(QWidget):
 
         snapshots = self._manager.list_snapshots()
         self._populate_compare_combos(snapshots)
-        if not snapshots:
+        if not snapshots and not self._snapshot_saving_ids:
             no_snapshots = QLabel(tr("snapshots.no_snapshots"))
             no_snapshots.setStyleSheet(f"color: {DesignSystem.COLOR_TEXT_SECONDARY}; padding: {DesignSystem.SPACE_8}px;")
             self._snapshot_cards_layout.insertWidget(0, no_snapshots)
             self._snapshot_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._status_label.setText(tr("snapshots.no_snapshots"))
+            self._snapshot_status_label.setVisible(False)
             return
+
+        saving_cards = []
+        for disk_id in self._snapshot_saving_ids:
+            card = self._create_saving_card(disk_id)
+            saving_cards.append(card)
+
+        for idx, card in enumerate(saving_cards):
+            self._snapshot_cards_layout.insertWidget(idx, card)
 
         for idx, snap in enumerate(snapshots):
             card = self._create_snapshot_card(snap)
-            self._snapshot_cards_layout.insertWidget(idx, card)
+            self._snapshot_cards_layout.insertWidget(len(saving_cards) + idx, card)
 
-        if len(snapshots) <= 4:
+        if len(snapshots) + len(saving_cards) <= 4:
             self._snapshot_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         else:
             self._snapshot_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        if self._snapshot_saving_ids:
+            self._snapshot_status_label.setText(tr("setup.snapshot_saving"))
+            self._snapshot_status_label.setVisible(True)
+        else:
+            self._snapshot_status_label.setVisible(False)
 
     def _on_view_snapshot(self, disk_id: str) -> None:
         """Load and display a snapshot in the explorer."""
@@ -412,6 +509,11 @@ class SnapshotsScreen(QWidget):
         self._compare_summary_label.setVisible(False)
         self._set_tree_headers(compare=False)
         self._current_snapshot = disk_id
+        self._status_label.setText(tr("common.loading"))
+        self._status_label.setVisible(True)
+        self._tree.clear()
+        from PyQt6.QtCore import QCoreApplication
+        QCoreApplication.processEvents()
         self._current_entries = self._manager.load_all_entries(disk_id)
         self._search_edit.clear()
         self._on_search_changed()
@@ -453,6 +555,16 @@ class SnapshotsScreen(QWidget):
             filtered = [e for e in self._current_entries if search_text in e.rel_path.lower()]
             self._populate_tree(filtered)
             self._status_label.setText(f"{len(filtered)} / {len(self._current_entries)} " + tr("review.total").lower())
+
+    def mark_snapshot_saving(self, disk_id: str, saving: bool) -> None:
+        """Mark a snapshot as being saved or finished saving."""
+        if saving:
+            if disk_id not in self._snapshot_saving_ids:
+                self._snapshot_saving_ids.append(disk_id)
+        else:
+            if disk_id in self._snapshot_saving_ids:
+                self._snapshot_saving_ids.remove(disk_id)
+        self._refresh()
 
     def _populate_tree(self, entries) -> None:
         self._tree.clear()
@@ -536,6 +648,15 @@ class SnapshotsScreen(QWidget):
             self._status_label.setText(tr("snapshots.compare_same_warning"))
             return
 
+        self._comparing = True
+        self._compare_btn.setEnabled(False)
+        self._compare_btn.setText(tr("common.loading"))
+        self._status_label.setText(tr("common.loading"))
+        self._status_label.setVisible(True)
+        self._tree.clear()
+        from PyQt6.QtCore import QCoreApplication
+        QCoreApplication.processEvents()
+
         entries_a = self._manager.load_all_entries(disk_a)
         entries_b = self._manager.load_all_entries(disk_b)
 
@@ -552,6 +673,10 @@ class SnapshotsScreen(QWidget):
         self._compare_summary_label.setVisible(True)
         self._search_edit.clear()
         self._apply_compare_filter()
+
+        self._comparing = False
+        self._compare_btn.setEnabled(True)
+        self._compare_btn.setText(tr("snapshots.compare_run"))
 
     def _on_clear_compare(self) -> None:
         self._in_compare_mode = False

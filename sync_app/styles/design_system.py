@@ -161,7 +161,7 @@ class DesignSystem:
     @staticmethod
     def get_header_icon_container_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_PRIMARY_LIGHT};
                 border-radius: {DesignSystem.RADIUS_MD}px;
             }}
@@ -257,7 +257,7 @@ class DesignSystem:
     @staticmethod
     def get_card_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT};
                 border-radius: {DesignSystem.RADIUS_MD}px;
@@ -407,14 +407,14 @@ class DesignSystem:
     @staticmethod
     def get_summary_card_style(border_color: str) -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT};
                 border-top: 4px solid {border_color};
                 border-radius: {DesignSystem.RADIUS_MD}px;
                 padding: {DesignSystem.SPACE_12}px;
             }}
-            QFrame:hover {{
+            .QFrame:hover {{
                 background-color: {DesignSystem.COLOR_BACKGROUND};
                 border-color: {DesignSystem.COLOR_BORDER};
                 border-top: 4px solid {border_color};
@@ -426,7 +426,7 @@ class DesignSystem:
     @staticmethod
     def get_source_panel_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 2px solid {DesignSystem.COLOR_PRIMARY};
                 border-radius: {DesignSystem.RADIUS_MD}px;
@@ -437,7 +437,7 @@ class DesignSystem:
     @staticmethod
     def get_dest_panel_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 2px solid {DesignSystem.COLOR_SUCCESS};
                 border-radius: {DesignSystem.RADIUS_MD}px;
@@ -467,7 +467,7 @@ class DesignSystem:
     @staticmethod
     def get_metric_card_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT};
                 border-radius: {DesignSystem.RADIUS_MD}px;
@@ -478,7 +478,7 @@ class DesignSystem:
     @staticmethod
     def get_destructive_warning_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: #FFF5F5;
                 border: 2px solid {DesignSystem.COLOR_DANGER};
                 border-radius: {DesignSystem.RADIUS_MD}px;
@@ -501,13 +501,13 @@ class DesignSystem:
     @staticmethod
     def get_preset_card_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 2px solid {DesignSystem.COLOR_BORDER};
                 border-radius: {DesignSystem.RADIUS_MD}px;
                 padding: {DesignSystem.SPACE_16}px;
             }}
-            QFrame:hover {{
+            .QFrame:hover {{
                 border-color: {DesignSystem.COLOR_PRIMARY};
             }}
         """
@@ -515,7 +515,7 @@ class DesignSystem:
     @staticmethod
     def get_preset_card_selected_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_PRIMARY_LIGHT};
                 border: 2px solid {DesignSystem.COLOR_PRIMARY};
                 border-radius: {DesignSystem.RADIUS_MD}px;
@@ -526,13 +526,13 @@ class DesignSystem:
     @staticmethod
     def get_disk_card_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_SURFACE};
                 border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT};
                 border-radius: {DesignSystem.RADIUS_MD}px;
                 padding: {DesignSystem.SPACE_12}px;
             }}
-            QFrame:hover {{
+            .QFrame:hover {{
                 border-color: {DesignSystem.COLOR_PRIMARY};
                 background-color: {DesignSystem.COLOR_PRIMARY_LIGHT};
             }}
@@ -562,7 +562,7 @@ class DesignSystem:
     @staticmethod
     def get_preset_detail_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_BACKGROUND};
                 border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT};
                 border-radius: {DesignSystem.RADIUS_BASE}px;
@@ -573,7 +573,7 @@ class DesignSystem:
     @staticmethod
     def get_resource_monitor_style() -> str:
         return f"""
-            QFrame {{
+            .QFrame {{
                 background-color: {DesignSystem.COLOR_BACKGROUND};
                 border: 1px solid {DesignSystem.COLOR_BORDER_LIGHT};
                 border-radius: {DesignSystem.RADIUS_SM}px;
