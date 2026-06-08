@@ -282,3 +282,4 @@ class SpaceCheckResult:
     required_bytes: int
     sufficient: bool
     shortfall_bytes: int
+    freed_bytes: int = 0

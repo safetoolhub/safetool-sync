@@ -12,6 +12,7 @@ from typing import Callable, Optional
 
 from config import Config
 from services.models import DiffType, SyncAction, SyncPlan, SyncReport
+from utils.platform_utils import win_long_path as _wlp
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,10 @@ def execute_plan(
     completed = 0
     spot_check_counter = 0
     spot_check_interval = 10  # verify every Nth file for SPOT_CHECK
+
+    _delete_actions = {SyncAction.DELETE_FROM_DEST, SyncAction.MOVE_TO_TRASH}
+    _early_cleanup_done = False
+    _had_delete_phase = False
 
     for entry in plan.entries:
         if cancel_check and cancel_check():
@@ -259,6 +264,16 @@ def execute_plan(
         if state_manager and hasattr(state_manager, 'mark_completed'):
             state_manager.mark_completed(entry.rel_path, entry.action.value)
 
+        if entry.action in _delete_actions:
+            _had_delete_phase = True
+        elif not _early_cleanup_done and _had_delete_phase:
+            if cleanup_empty_dirs and not dry_run:
+                _do_cleanup(dest_root, progress_cb, cancel_check)
+            _early_cleanup_done = True
+
+    if not _early_cleanup_done and _had_delete_phase and cleanup_empty_dirs and not dry_run:
+        _do_cleanup(dest_root, progress_cb, cancel_check=None)
+
     if cleanup_empty_dirs and not dry_run:
         _do_cleanup(dest_root, progress_cb, cancel_check)
 
@@ -268,30 +283,59 @@ def execute_plan(
 def _clear_readonly(path: Path) -> None:
     """Remove read-only attribute from a file, logging when successful."""
     try:
-        if os.access(str(path), os.W_OK):
+        if os.access(_wlp(path), os.W_OK):
             return
-        path.chmod(0o666)
+        Path(_wlp(path)).chmod(0o666)
         logger.info("Removed read-only attribute: %s", path)
     except OSError:
         pass
 
 
 def _copy_file(src: Path, dst: Path) -> bool:
-    """Copy a file, creating parent directories as needed."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
+    """Copy a file, creating parent directories as needed and preserving their mtimes."""
+    new_dirs = _collect_new_parent_dirs(dst, src)
+    Path(_wlp(dst.parent)).mkdir(parents=True, exist_ok=True)
+    if Path(_wlp(dst)).exists():
         _clear_readonly(dst)
-    shutil.copy2(str(src), str(dst))
+    shutil.copy2(_wlp(src), _wlp(dst))
+    _restore_parent_dir_mtimes(new_dirs)
     return True
+
+
+def _collect_new_parent_dirs(dst: Path, src: Path) -> list[tuple[Path, Path, float | None]]:
+    """Find parent directories that don't exist yet, paired with source counterparts and their mtimes."""
+    chain = []
+    dst_dir = dst.parent
+    src_dir = src.parent
+    while not Path(_wlp(dst_dir)).exists() and dst_dir != dst_dir.parent:
+        src_mtime = Path(_wlp(src_dir)).stat().st_mtime if Path(_wlp(src_dir)).exists() else None
+        chain.append((dst_dir, src_dir, src_mtime))
+        dst_dir = dst_dir.parent
+        src_dir = src_dir.parent
+    chain.reverse()
+    return chain
+
+
+def _restore_parent_dir_mtimes(new_dirs: list[tuple[Path, Path, float | None]]) -> None:
+    """Set mtime on newly created directories to match their source counterparts."""
+    for dst_dir, src_dir, saved_mtime in new_dirs:
+        mtime = saved_mtime
+        if mtime is None and Path(_wlp(src_dir)).exists():
+            mtime = Path(_wlp(src_dir)).stat().st_mtime
+        if mtime is not None:
+            try:
+                os.utime(_wlp(dst_dir), (mtime, mtime))
+            except OSError:
+                pass
 
 
 def _delete_file(path: Path) -> bool:
     """Permanently delete a file."""
-    if path.is_dir():
-        shutil.rmtree(str(path))
-    elif path.exists():
+    if Path(_wlp(path)).is_dir():
+        shutil.rmtree(_wlp(path))
+    elif Path(_wlp(path)).exists():
         _clear_readonly(path)
-        path.unlink()
+        Path(_wlp(path)).unlink()
     return True
 
 
@@ -311,11 +355,13 @@ def _move_to_trash(path: Path, use_trash: bool = True) -> bool:
 
 
 def _rename_file(old_path: Path, new_path: Path) -> bool:
-    """Rename/move a file from old_path to new_path."""
-    new_path.parent.mkdir(parents=True, exist_ok=True)
-    if new_path.exists():
+    """Rename/move a file from old_path to new_path, preserving parent dir mtimes."""
+    new_dirs = _collect_new_parent_dirs(new_path, old_path)
+    Path(_wlp(new_path.parent)).mkdir(parents=True, exist_ok=True)
+    if Path(_wlp(new_path)).exists():
         _clear_readonly(new_path)
-    os.rename(str(old_path), str(new_path))
+    os.rename(_wlp(old_path), _wlp(new_path))
+    _restore_parent_dir_mtimes(new_dirs)
     return True
 
 
@@ -332,7 +378,7 @@ def _verify_file(src: Path, dst: Path) -> bool:
 def _hash_file(path: Path, block_size: int = Config.HASH_BLOCK_SIZE) -> str:
     """Compute SHA-256 hash of a file."""
     sha = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open(_wlp(path), "rb") as f:
         while True:
             block = f.read(block_size)
             if not block:
@@ -342,28 +388,23 @@ def _hash_file(path: Path, block_size: int = Config.HASH_BLOCK_SIZE) -> str:
 
 
 def _overwrite_case_mismatch(src_path: Path | None, dst_path: Path, dest_root: Path) -> bool:
-    """Handle CASE_MISMATCH overwrite by removing old case and creating correct case.
-
-    On case-insensitive filesystems (Windows), copying to a path with different
-    case won't change the existing directory/file case. This function:
-    1. Finds and removes the existing entry at the case-insensitive location
-    2. Fixes parent directory case if needed
-    3. Copies the source with the correct case
-    """
+    """Handle CASE_MISMATCH overwrite by removing old case and creating correct case."""
     if src_path is None:
         return False
 
     _fix_parent_case(dst_path, dest_root)
 
-    if dst_path.exists():
-        if dst_path.is_dir():
-            shutil.rmtree(str(dst_path))
+    if Path(_wlp(dst_path)).exists():
+        if Path(_wlp(dst_path)).is_dir():
+            shutil.rmtree(_wlp(dst_path))
         else:
             _clear_readonly(dst_path)
-            dst_path.unlink()
+            Path(_wlp(dst_path)).unlink()
 
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(src_path), str(dst_path))
+    new_dirs = _collect_new_parent_dirs(dst_path, src_path)
+    Path(_wlp(dst_path.parent)).mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_wlp(src_path), _wlp(dst_path))
+    _restore_parent_dir_mtimes(new_dirs)
     return True
 
 
@@ -380,9 +421,9 @@ def _fix_parent_case(target_path: Path, root: Path) -> bool:
     current = root
     for part in parts:
         target_dir = current / part
-        if not target_dir.exists():
+        if not Path(_wlp(target_dir)).exists():
             try:
-                parent_entries = [e.name for e in current.iterdir() if e.is_dir()]
+                parent_entries = [e.name for e in Path(_wlp(current)).iterdir() if e.is_dir()]
                 actual_name = None
                 for entry_name in parent_entries:
                     if entry_name.lower() == part.lower():
@@ -393,10 +434,10 @@ def _fix_parent_case(target_path: Path, root: Path) -> bool:
                     actual_dir = current / actual_name
                     if actual_name != part:
                         temp_dir = current / (part + "_tmp_case_fix")
-                        if temp_dir.exists():
-                            shutil.rmtree(str(temp_dir))
-                        os.rename(str(actual_dir), str(temp_dir))
-                        os.rename(str(temp_dir), str(target_dir))
+                        if Path(_wlp(temp_dir)).exists():
+                            shutil.rmtree(_wlp(temp_dir))
+                        os.rename(_wlp(actual_dir), _wlp(temp_dir))
+                        os.rename(_wlp(temp_dir), _wlp(target_dir))
                         current = target_dir
                     else:
                         current = target_dir
@@ -407,7 +448,7 @@ def _fix_parent_case(target_path: Path, root: Path) -> bool:
             continue
 
         try:
-            parent_entries = [e.name for e in current.iterdir() if e.is_dir()]
+            parent_entries = [e.name for e in Path(_wlp(current)).iterdir() if e.is_dir()]
             actual_name = None
             for entry_name in parent_entries:
                 if entry_name.lower() == part.lower():
@@ -416,11 +457,11 @@ def _fix_parent_case(target_path: Path, root: Path) -> bool:
 
             if actual_name and actual_name != part:
                 temp_dir = current / (part + "_tmp_case_fix")
-                if temp_dir.exists():
-                    shutil.rmtree(str(temp_dir))
+                if Path(_wlp(temp_dir)).exists():
+                    shutil.rmtree(_wlp(temp_dir))
                 actual_dir = current / actual_name
-                os.rename(str(actual_dir), str(temp_dir))
-                os.rename(str(temp_dir), str(target_dir))
+                os.rename(_wlp(actual_dir), _wlp(temp_dir))
+                os.rename(_wlp(temp_dir), _wlp(target_dir))
                 current = target_dir
             else:
                 current = target_dir

@@ -56,8 +56,10 @@ class SyncWorker(QThread):
                     len(self._plan.entries),
                 )
 
+            plan = self._reorder_if_needed()
+
             report = execute_plan(
-                plan=self._plan,
+                plan=plan,
                 source_root=self._source_root,
                 dest_root=self._dest_root,
                 verify_mode=self._verify_mode,
@@ -116,3 +118,7 @@ class SyncWorker(QThread):
     @property
     def is_paused(self) -> bool:
         return not self._pause_event.is_set()
+
+    def _reorder_if_needed(self) -> SyncPlan:
+        from services.space_calculator import reorder_plan_for_space
+        return reorder_plan_for_space(self._plan, self._dest_root, self._source_root)

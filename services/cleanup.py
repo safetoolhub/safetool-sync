@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
+from utils.platform_utils import win_long_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,9 +43,10 @@ def cleanup_empty_dirs(
             continue
 
         try:
-            entries = list(dirpath_obj.iterdir())
+            entries = list(Path(win_long_path(dirpath_obj)).iterdir())
             if not entries:
-                dirpath_obj.rmdir()
+                _clear_readonly(dirpath_obj)
+                Path(win_long_path(dirpath_obj)).rmdir()
                 removed.append(str(dirpath_obj))
                 logger.info("Removed empty directory: %s", dirpath_obj)
                 if progress_cb:
@@ -52,3 +55,15 @@ def cleanup_empty_dirs(
             logger.debug("Cannot remove directory %s: %s", dirpath_obj, e)
 
     return removed
+
+
+def _clear_readonly(path: Path) -> None:
+    """Remove read-only attribute from a directory on Windows."""
+    try:
+        if os.name == 'nt':
+            import stat
+            mode = Path(win_long_path(path)).stat().st_mode
+            if not mode & stat.S_IWRITE:
+                Path(win_long_path(path)).chmod(mode | stat.S_IWRITE)
+    except OSError:
+        pass

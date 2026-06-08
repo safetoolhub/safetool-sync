@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import Config
+from utils.platform_utils import win_long_path
 
 
 def hash_file(path: Path, block_size: int = Config.HASH_BLOCK_SIZE) -> str:
@@ -27,7 +28,7 @@ def hash_file(path: Path, block_size: int = Config.HASH_BLOCK_SIZE) -> str:
         OSError: On I/O errors.
     """
     sha = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open(win_long_path(path), "rb") as f:
         while True:
             block = f.read(block_size)
             if not block:

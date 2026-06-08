@@ -171,3 +171,226 @@ class TestCaseMismatch:
             assert "FOLDER" in str(actual_file)
             assert "SUB" in str(actual_file)
             assert actual_file.read_text() == "new data"
+
+
+class TestDirectoryMtimePreservation:
+    def test_new_subdir_preserves_source_mtime(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+            sub = src_root / "olddir"
+            sub.mkdir()
+            (sub / "file.txt").write_text("hello")
+            old_mtime = 946684800.0
+            os.utime(str(sub), (old_mtime, old_mtime))
+
+            source_entry = _entry("olddir/file.txt", size=5)
+            entries = [_comparison("olddir/file.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST, source=source_entry)]
+            plan = SyncPlan(entries=entries, total_copy_bytes=5, total_delete_count=0, total_overwrite_count=0, total_rename_count=0)
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF")
+
+            dst_dir = dst_root / "olddir"
+            assert dst_dir.exists()
+            assert abs(dst_dir.stat().st_mtime - old_mtime) < 1.0
+
+    def test_deep_nested_dirs_preserve_mtime(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+            deep = src_root / "a" / "b" / "c"
+            deep.mkdir(parents=True)
+            (deep / "file.txt").write_text("deep")
+            mtime_a = 946684800.0
+            mtime_b = 978307200.0
+            mtime_c = 1009843200.0
+            os.utime(str(src_root / "a"), (mtime_a, mtime_a))
+            os.utime(str(src_root / "a" / "b"), (mtime_b, mtime_b))
+            os.utime(str(src_root / "a" / "b" / "c"), (mtime_c, mtime_c))
+
+            source_entry = _entry("a/b/c/file.txt", size=4)
+            entries = [_comparison("a/b/c/file.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST, source=source_entry)]
+            plan = SyncPlan(entries=entries, total_copy_bytes=4, total_delete_count=0, total_overwrite_count=0, total_rename_count=0)
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF")
+
+            assert abs((dst_root / "a").stat().st_mtime - mtime_a) < 1.0
+            assert abs((dst_root / "a" / "b").stat().st_mtime - mtime_b) < 1.0
+            assert abs((dst_root / "a" / "b" / "c").stat().st_mtime - mtime_c) < 1.0
+
+    def test_existing_dir_not_touched_by_restore(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+            src_sub = src_root / "shared"
+            src_sub.mkdir()
+            (src_sub / "new.txt").write_text("new file")
+            old_src_mtime = 946684800.0
+            os.utime(str(src_sub), (old_src_mtime, old_src_mtime))
+            old_dst_mtime = 978307200.0
+            dst_sub = dst_root / "shared"
+            dst_sub.mkdir()
+            os.utime(str(dst_sub), (old_dst_mtime, old_dst_mtime))
+
+            from services.executor import _collect_new_parent_dirs
+            src_path = src_root / "shared" / "new.txt"
+            dst_path = dst_root / "shared" / "new.txt"
+            new_dirs = _collect_new_parent_dirs(dst_path, src_path)
+            assert len(new_dirs) == 0
+
+    def test_rename_preserves_new_dir_mtime(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+            src_sub = src_root / "newdir"
+            src_sub.mkdir()
+            (src_sub / "moved.txt").write_text("moved")
+            old_mtime = 946684800.0
+            os.utime(str(src_sub), (old_mtime, old_mtime))
+            old_path = src_root / "newdir" / "moved.txt"
+            new_path = dst_root / "newdir" / "moved.txt"
+            from services.executor import _rename_file
+            _rename_file(old_path, new_path)
+
+            assert new_path.exists()
+            assert abs((dst_root / "newdir").stat().st_mtime - old_mtime) < 1.0
+
+
+class TestEarlyCleanupAfterDeletePhase:
+
+    def test_early_cleanup_removes_empty_dirs_before_copy_phase(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+
+            (src_root / "new_file.txt").write_text("new content")
+
+            orphan_dir = dst_root / "orphan" / "nested"
+            orphan_dir.mkdir(parents=True)
+            (orphan_dir / "old.txt").write_text("old")
+
+            dest_entry = _entry("orphan/nested/old.txt", size=3)
+            source_entry = _entry("new_file.txt", size=11)
+            entries = [
+                _comparison("orphan/nested/old.txt", DiffType.DEST_ONLY, SyncAction.DELETE_FROM_DEST, dest=dest_entry),
+                _comparison("new_file.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST, source=source_entry),
+            ]
+            plan = SyncPlan(entries=entries, total_copy_bytes=11, total_delete_count=1, total_overwrite_count=0, total_rename_count=0)
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF", cleanup_empty_dirs=True)
+
+            assert not (dst_root / "orphan").exists()
+            assert (dst_root / "new_file.txt").read_text() == "new content"
+
+    def test_early_cleanup_on_cancel_after_deletes(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+
+            (src_root / "file1.txt").write_text("content1")
+            (src_root / "file2.txt").write_text("content2")
+
+            for i in range(3):
+                orphan = dst_root / f"orphan_{i}" / "deep"
+                orphan.mkdir(parents=True)
+                (orphan / f"old_{i}.txt").write_text("old")
+
+            delete_entries = [
+                _comparison(f"orphan_{i}/deep/old_{i}.txt", DiffType.DEST_ONLY, SyncAction.DELETE_FROM_DEST,
+                            dest=_entry(f"orphan_{i}/deep/old_{i}.txt", size=3))
+                for i in range(3)
+            ]
+            copy_entries = [
+                _comparison(f"file{i+1}.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST,
+                            source=_entry(f"file{i+1}.txt", size=8))
+                for i in range(2)
+            ]
+            entries = delete_entries + copy_entries
+            plan = SyncPlan(entries=entries, total_copy_bytes=16, total_delete_count=3, total_overwrite_count=0, total_rename_count=0)
+
+            cancel_after = [0]
+            processed = [0]
+
+            def cancel_check() -> bool:
+                processed[0] += 1
+                if processed[0] > 3:
+                    return True
+                return False
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF", cleanup_empty_dirs=True, cancel_check=cancel_check)
+
+            for i in range(3):
+                assert not (dst_root / f"orphan_{i}").exists()
+
+    def test_no_early_cleanup_without_flag(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+
+            (src_root / "new.txt").write_text("new")
+
+            orphan = dst_root / "orphan"
+            orphan.mkdir()
+            (orphan / "old.txt").write_text("old")
+
+            dest_entry = _entry("orphan/old.txt", size=3)
+            source_entry = _entry("new.txt", size=3)
+            entries = [
+                _comparison("orphan/old.txt", DiffType.DEST_ONLY, SyncAction.DELETE_FROM_DEST, dest=dest_entry),
+                _comparison("new.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST, source=source_entry),
+            ]
+            plan = SyncPlan(entries=entries, total_copy_bytes=3, total_delete_count=1, total_overwrite_count=0, total_rename_count=0)
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF", cleanup_empty_dirs=False)
+
+            assert (dst_root / "orphan").exists()
+
+    def test_early_cleanup_with_move_to_trash(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+
+            (src_root / "keep.txt").write_text("keep")
+
+            orphan = dst_root / "trash_me" / "sub"
+            orphan.mkdir(parents=True)
+            (orphan / "junk.txt").write_text("junk")
+
+            dest_entry = _entry("trash_me/sub/junk.txt", size=4)
+            source_entry = _entry("keep.txt", size=4)
+            entries = [
+                _comparison("trash_me/sub/junk.txt", DiffType.DEST_ONLY, SyncAction.MOVE_TO_TRASH, dest=dest_entry),
+                _comparison("keep.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST, source=source_entry),
+            ]
+            plan = SyncPlan(entries=entries, total_copy_bytes=4, total_delete_count=1, total_overwrite_count=0, total_rename_count=0)
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF", cleanup_empty_dirs=True, use_trash=False)
+
+            assert not (dst_root / "trash_me").exists()
+            assert (dst_root / "keep.txt").read_text() == "keep"
+
+    def test_early_cleanup_keeps_non_empty_dirs(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            src_root = Path(src)
+            dst_root = Path(dst)
+
+            (src_root / "new.txt").write_text("new")
+
+            mixed = dst_root / "mixed"
+            mixed.mkdir()
+            (mixed / "delete_me.txt").write_text("bye")
+            (mixed / "keep_me.txt").write_text("stay")
+
+            dest_entry = _entry("mixed/delete_me.txt", size=3)
+            source_entry = _entry("new.txt", size=3)
+            entries = [
+                _comparison("mixed/delete_me.txt", DiffType.DEST_ONLY, SyncAction.DELETE_FROM_DEST, dest=dest_entry),
+                _comparison("new.txt", DiffType.SOURCE_ONLY, SyncAction.COPY_TO_DEST, source=source_entry),
+            ]
+            plan = SyncPlan(entries=entries, total_copy_bytes=3, total_delete_count=1, total_overwrite_count=0, total_rename_count=0)
+
+            execute_plan(plan, src_root, dst_root, verify_mode="OFF", cleanup_empty_dirs=True)
+
+            assert mixed.exists()
+            assert (mixed / "keep_me.txt").read_text() == "stay"
+            assert (dst_root / "new.txt").read_text() == "new"

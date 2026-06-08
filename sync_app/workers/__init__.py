@@ -8,3 +8,5 @@ from sync_app.workers.compare_worker import CompareWorker  # noqa: F401
 from sync_app.workers.hash_worker import HashWorker  # noqa: F401
 from sync_app.workers.sync_worker import SyncWorker  # noqa: F401
 from sync_app.workers.resource_monitor_worker import ResourceMonitorWorker  # noqa: F401
+from sync_app.workers.empty_folder_scan_worker import EmptyFolderScanWorker  # noqa: F401
+from sync_app.workers.empty_folder_delete_worker import EmptyFolderDeleteWorker  # noqa: F401

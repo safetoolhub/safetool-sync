@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -158,6 +159,26 @@ def is_removable_drive(mount_point: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def win_long_path(path: str | os.PathLike) -> str:
+    """Convert a path to Windows extended-length format (\\\\?\\ prefix).
+
+    Bypasses Windows path normalization that strips trailing spaces/dots
+    and enforces MAX_PATH (260 char) limit. No-op on non-Windows platforms.
+    """
+    if platform.system() != "Windows":
+        return str(path)
+    s = os.fspath(path)
+    if s.startswith("\\\\?\\") or s.startswith("\\\\./"):
+        return s
+    if s.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + s[2:]
+    p = Path(s).resolve()
+    ps = str(p)
+    if ps.startswith("\\\\?\\") or ps.startswith("\\\\./"):
+        return ps
+    return "\\\\?\\" + ps
 
 
 def open_folder_in_explorer(path: str) -> None:

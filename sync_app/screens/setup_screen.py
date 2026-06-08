@@ -839,6 +839,7 @@ class SetupScreen(QScrollArea):
             self._analyze_btn.setToolTip(tr("setup.analyze_disabled_tooltip"))
         self._update_drive_labels()
 
+
     def _update_drive_labels(self) -> None:
         self._update_one_drive_label(
             getattr(self, "_source_drive_label", None), self.get_source_path()
