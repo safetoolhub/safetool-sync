@@ -35,6 +35,8 @@ class EmptyFolderDeleteResult:
     removed: list[str] = field(default_factory=list)
     cascade_removed: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
+    skipped_not_found: list[str] = field(default_factory=list)
+    skipped_not_empty: list[str] = field(default_factory=list)
     total_freed_dirs: int = 0
 
 
@@ -113,9 +115,13 @@ def delete_empty_folders(
         try:
             p = Path(dir_path)
             if not p.exists():
+                result.skipped_not_found.append(dir_path)
+                logger.warning("Directory no longer exists, skipping: %s", dir_path)
                 continue
             entries = list(p.iterdir())
             if entries:
+                result.skipped_not_empty.append(dir_path)
+                logger.warning("Directory is no longer empty, skipping: %s", dir_path)
                 continue
             p.rmdir()
             result.removed.append(dir_path)
@@ -162,6 +168,8 @@ def generate_delete_log(
     lines.append(f"Direct removals: {len(result.removed)}")
     lines.append(f"Cascade removals: {len(result.cascade_removed)}")
     lines.append(f"Failed: {len(result.failed)}")
+    lines.append(f"Skipped (not found): {len(result.skipped_not_found)}")
+    lines.append(f"Skipped (not empty): {len(result.skipped_not_empty)}")
     lines.append(f"Total directories removed: {result.total_freed_dirs}")
     lines.append("")
 
@@ -179,6 +187,22 @@ def generate_delete_log(
         lines.append("-" * 70)
         for p in sorted(result.cascade_removed):
             lines.append(f"  [CASCADE] {p}")
+        lines.append("")
+
+    if result.skipped_not_found:
+        lines.append("-" * 70)
+        lines.append("SKIPPED (no longer exists):")
+        lines.append("-" * 70)
+        for p in sorted(result.skipped_not_found):
+            lines.append(f"  [NOT FOUND] {p}")
+        lines.append("")
+
+    if result.skipped_not_empty:
+        lines.append("-" * 70)
+        lines.append("SKIPPED (no longer empty):")
+        lines.append("-" * 70)
+        for p in sorted(result.skipped_not_empty):
+            lines.append(f"  [NOT EMPTY] {p}")
         lines.append("")
 
     if result.failed:

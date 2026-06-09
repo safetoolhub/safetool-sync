@@ -210,11 +210,15 @@ class TestDeleteEmptyFolders:
         result = delete_empty_folders([str(non_empty)])
 
         assert len(result.removed) == 0
+        assert len(result.skipped_not_empty) == 1
+        assert str(non_empty) in result.skipped_not_empty
         assert non_empty.exists()
 
     def test_skip_nonexistent_path(self, temp_dir: Path) -> None:
         result = delete_empty_folders([str(temp_dir / "nonexistent")])
         assert len(result.removed) == 0
+        assert len(result.skipped_not_found) == 1
+        assert str(temp_dir / "nonexistent") in result.skipped_not_found
 
     def test_cancel_stops_deletion(self, temp_dir: Path) -> None:
         paths = []
@@ -311,3 +315,21 @@ class TestGenerateDeleteLog:
         result = EmptyFolderDeleteResult()
         log = generate_delete_log(result, str(temp_dir))
         assert "Date:" in log
+
+    def test_log_contains_skipped_not_found(self, temp_dir: Path) -> None:
+        result = EmptyFolderDeleteResult(
+            skipped_not_found=[str(temp_dir / "gone")],
+        )
+        log = generate_delete_log(result, str(temp_dir))
+        assert "SKIPPED (no longer exists)" in log
+        assert "gone" in log
+        assert "NOT FOUND" in log
+
+    def test_log_contains_skipped_not_empty(self, temp_dir: Path) -> None:
+        result = EmptyFolderDeleteResult(
+            skipped_not_empty=[str(temp_dir / "filled")],
+        )
+        log = generate_delete_log(result, str(temp_dir))
+        assert "SKIPPED (no longer empty)" in log
+        assert "filled" in log
+        assert "NOT EMPTY" in log
