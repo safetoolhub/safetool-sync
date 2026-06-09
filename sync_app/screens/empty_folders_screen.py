@@ -3,15 +3,19 @@
 """Empty folders screen — find and remove empty directories."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
+    QUrl,
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -24,6 +28,9 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -42,7 +49,22 @@ from sync_app.styles.icons import icon_manager
 COL_CHECK = 0
 COL_PATH = 1
 COL_DEPTH = 2
-NUM_COLUMNS = 3
+COL_OPEN = 3
+NUM_COLUMNS = 4
+
+
+class _OpenFolderDelegate(QStyledItemDelegate):
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        painter.save()
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, QColor(DesignSystem.COLOR_PRIMARY_LIGHT))
+        painter.setPen(QColor(DesignSystem.COLOR_TEXT_SECONDARY))
+        font = painter.font()
+        font.setPointSize(12)
+        painter.setFont(font)
+        painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, "\U0001f4c2")
+        painter.restore()
 
 
 class _EmptyFolderTableModel(QAbstractTableModel):
@@ -84,12 +106,16 @@ class _EmptyFolderTableModel(QAbstractTableModel):
                 return folder.rel_path
             if col == COL_DEPTH:
                 return str(folder.depth)
+            if col == COL_OPEN:
+                return ""
         elif role == Qt.ItemDataRole.CheckStateRole:
             if col == COL_CHECK:
                 return Qt.CheckState.Checked if self._checked[index.row()] else Qt.CheckState.Unchecked
         elif role == Qt.ItemDataRole.ToolTipRole:
             if col == COL_PATH:
                 return folder.path
+            if col == COL_OPEN:
+                return tr("empty_folders.open_folder")
         elif role == Qt.ItemDataRole.UserRole:
             return folder
         return None
@@ -117,6 +143,8 @@ class _EmptyFolderTableModel(QAbstractTableModel):
                 return tr("empty_folders.col_path")
             if section == COL_DEPTH:
                 return tr("empty_folders.col_depth")
+            if section == COL_OPEN:
+                return ""
         return None
 
     def set_all_checked(self, checked: bool) -> None:
@@ -291,6 +319,11 @@ class EmptyFoldersScreen(QWidget):
         header.setSectionResizeMode(COL_PATH, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_DEPTH, QHeaderView.ResizeMode.Fixed)
         header.resizeSection(COL_DEPTH, 130)
+        header.setSectionResizeMode(COL_OPEN, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(COL_OPEN, 36)
+
+        self._open_folder_delegate = _OpenFolderDelegate(self._table)
+        self._table.setItemDelegateForColumn(COL_OPEN, self._open_folder_delegate)
 
         self._table.clicked.connect(self._on_table_clicked)
 
@@ -426,6 +459,19 @@ class EmptyFoldersScreen(QWidget):
             self._table_model._checked_count += -1 if was_checked else 1
             self._table.viewport().update()
             self._update_delete_btn()
+        elif index.column() == COL_OPEN:
+            folder = index.data(Qt.ItemDataRole.UserRole)
+            if folder:
+                folder_path = Path(folder.path)
+                if folder_path.is_dir():
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(folder.path))
+                else:
+                    logger.warning("Cannot open folder, no longer exists: %s", folder.path)
+                    QMessageBox.warning(
+                        self,
+                        tr("empty_folders.folder_not_found_title"),
+                        tr("empty_folders.folder_not_found_msg", path=folder.path),
+                    )
 
     def _update_count_label(self) -> None:
         total = self._table_model.rowCount()
@@ -482,23 +528,42 @@ class EmptyFoldersScreen(QWidget):
         total = result.total_freed_dirs
         failed = len(result.failed)
         cascade = len(result.cascade_removed)
+        skipped_not_found = len(result.skipped_not_found)
+        skipped_not_empty = len(result.skipped_not_empty)
 
         msg_parts = [tr("empty_folders.delete_complete", total=total)]
         if cascade > 0:
             msg_parts.append(tr("empty_folders.cascade_info", count=cascade))
         if failed > 0:
             msg_parts.append(tr("empty_folders.failed_info", count=failed))
+        if skipped_not_found > 0:
+            logger.warning("Delete completed with %d folders no longer existing", skipped_not_found)
+            msg_parts.append(tr("empty_folders.skipped_not_found_info", count=skipped_not_found))
+        if skipped_not_empty > 0:
+            logger.warning("Delete completed with %d folders no longer empty", skipped_not_empty)
+            msg_parts.append(tr("empty_folders.skipped_not_empty_info", count=skipped_not_empty))
 
-        self._status_label.setText(" | ".join(msg_parts))
+        has_stale_data = skipped_not_found > 0 or skipped_not_empty > 0
+        if has_stale_data:
+            msg_parts.append(tr("empty_folders.rescan_recommended"))
+
+        self._status_label.setText(" | ".join(msg_parts[:3]))
 
         self._table_model.clear_data()
         self._count_label.setText(tr("empty_folders.folders_removed", count=total))
 
-        QMessageBox.information(
-            self,
-            tr("empty_folders.complete_title"),
-            "\n".join(msg_parts),
-        )
+        if has_stale_data:
+            QMessageBox.warning(
+                self,
+                tr("empty_folders.stale_data_title"),
+                "\n".join(msg_parts),
+            )
+        else:
+            QMessageBox.information(
+                self,
+                tr("empty_folders.complete_title"),
+                "\n".join(msg_parts),
+            )
 
     def _on_delete_error(self, error: str) -> None:
         self._delete_worker = None

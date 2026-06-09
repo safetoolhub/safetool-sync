@@ -633,6 +633,13 @@
     "no_drives_title": "No drives",
     "no_drives_msg": "No drives detected.",
     "col_path": "Path",
-    "col_depth": "Depth"
+    "col_depth": "Depth",
+    "open_folder": "Open folder",
+    "folder_not_found_title": "Folder not found",
+    "folder_not_found_msg": "The folder no longer exists:\n{path}\n\nIt may have been deleted or moved since the scan.",
+    "skipped_not_found_info": "{count} folders no longer exist",
+    "skipped_not_empty_info": "{count} folders are no longer empty",
+    "rescan_recommended": "It is recommended to perform a new scan to update the data.",
+    "stale_data_title": "Cleanup completed with warnings"
   }
 }

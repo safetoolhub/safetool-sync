@@ -633,6 +633,13 @@
     "no_drives_title": "Sin unidades",
     "no_drives_msg": "No se detectaron unidades disponibles.",
     "col_path": "Ruta",
-    "col_depth": "Profundidad"
+    "col_depth": "Profundidad",
+    "open_folder": "Abrir carpeta",
+    "folder_not_found_title": "Carpeta no encontrada",
+    "folder_not_found_msg": "La carpeta ya no existe:\n{path}\n\nEs posible que haya sido eliminada o movida desde el análisis.",
+    "skipped_not_found_info": "{count} carpetas ya no existen",
+    "skipped_not_empty_info": "{count} carpetas ya no están vacías",
+    "rescan_recommended": "Se recomienda realizar una nueva búsqueda para actualizar los datos.",
+    "stale_data_title": "Limpieza completada con advertencias"
   }
 }
